@@ -1,0 +1,34 @@
+name: Deploy to GitHub Pages
+
+# NOTE: the repo's Pages source must be set to "GitHub Actions" (build_type=workflow),
+# NOT the legacy branch source. With the branch source this workflow runs, reports
+# success, and deploys nothing — the same trap db-viz-station hit.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.DS_Store
+
+# flat intermediates written by scripts/build_sections.sql and consumed by
+# scripts/build_sections.py — the shards in public/data/sections/ are the
+# artifact, these are scaffolding (and _sections.parquet alone is ~12 MB)
+public/data/_*.parquet
+
+# public/data/ is CI-owned: refresh.yml rebuilds index.json, stations.json and
+# every section shard from the current release and commits them (see its `git add`
+# list). It is deliberately NOT ignored — the built artifacts belong in the repo so
+# Pages can serve them — but the FIRST commit ships no data, because the shards
+# built before this repo existed carry the retired `preliminary` data_stage that
+# build_sections.py now refuses. Let CI populate them from a post-split release.

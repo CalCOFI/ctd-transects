@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CalCOFI CTD Transects</title>
+<meta name="description" content="Cross-shelf temperature, salinity and oxygen sections along every CalCOFI line, for every cruise since 1993.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🌊</text></svg>">
+<link rel="stylesheet" href="styles.css">
+<script src="vendor/plotly.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <h1>CalCOFI CTD Transects</h1>
+    <p class="tagline">Nearshore&nbsp;→&nbsp;offshore sections, automatically drawn for every line and cruise</p>
+  </div>
+  <div class="release" id="release"></div>
+</header>
+
+<nav class="controls" aria-label="Section selection">
+  <label class="ctl">
+    <span>Line</span>
+    <select id="sel-line"></select>
+  </label>
+  <label class="ctl">
+    <span>Cruise</span>
+    <select id="sel-cruise"></select>
+  </label>
+  <label class="ctl">
+    <span>Variable</span>
+    <select id="sel-var"></select>
+  </label>
+  <label class="ctl ctl-depth">
+    <span>Max depth <output id="out-depth">500</output> m</span>
+    <input id="sel-depth" type="range" min="50" max="500" step="50" value="500">
+  </label>
+  <div class="spacer"></div>
+  <div id="stage-badge" class="badge" hidden></div>
+</nav>
+
+<main>
+  <section class="panel panel-section">
+    <p id="plot-note" class="note note-top" hidden></p>
+    <div id="plot" class="plot"></div>
+  </section>
+  <aside class="panel panel-map">
+    <h2>Where this is</h2>
+    <div id="map" class="map"></div>
+    <p class="note">
+      The highlighted stations are the transect, ordered nearshore to offshore.
+      Grey points are the rest of the CalCOFI grid.
+    </p>
+  </aside>
+</main>
+
+<footer>
+  <p>
+    Built from the
+    <a href="https://calcofi.io/schema/">CalCOFI integrated database</a>
+    release <span id="release-foot"></span>.
+    Data: <a href="https://calcofi.org/data/oceanographic-data/ctd-cast-files/">CalCOFI CTD Cast Files</a>
+    · <a href="https://calcofi.io/workflows/ingest_calcofi_ctd-cast.html">ingest workflow</a>
+    · <a href="https://github.com/CalCOFI/ctd-transects">source</a>
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

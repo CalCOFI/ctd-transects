@@ -1,0 +1,187 @@
+:root {
+  --bg: #ffffff;
+  --fg: #14202b;
+  --muted: #5b6b7a;
+  --line: #dde3e9;
+  --panel: #ffffff;
+  --accent: #1d6a8c;
+  --shadow: 0 1px 2px rgba(20, 32, 43, .06), 0 4px 14px rgba(20, 32, 43, .05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f151b;
+    --fg: #e6edf3;
+    --muted: #9aa9b7;
+    --line: #22303c;
+    --panel: #151d25;
+    --accent: #5cc2e6;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+}
+
+a { color: var(--accent); }
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.25rem .75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+
+.tagline {
+  margin: .15rem 0 0;
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+.release {
+  color: var(--muted);
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── controls ───────────────────────────────────────────────────────────── */
+
+.controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: .75rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ctl {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  min-width: 0;
+}
+
+.ctl > span {
+  color: var(--muted);
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.ctl select,
+.ctl input[type="range"] {
+  font: inherit;
+  padding: .35rem .5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  max-width: 20rem;
+}
+
+.ctl input[type="range"] { padding: 0; width: 11rem; accent-color: var(--accent); }
+.ctl-depth output { font-variant-numeric: tabular-nums; }
+
+.spacer { flex: 1 1 auto; }
+
+.badge {
+  padding: .3rem .6rem;
+  border-radius: 999px;
+  font-size: .75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.badge-final  { background: #e6f6ec; color: #1a6b3c; border-color: #bfe6ce; }
+.badge-prelim { background: #fdf0e3; color: #8a4b12; border-color: #f2d5b3; }
+
+@media (prefers-color-scheme: dark) {
+  .badge-final  { background: #122c1e; color: #7fd6a2; border-color: #1d4a32; }
+  .badge-prelim { background: #33230f; color: #eab77a; border-color: #5a3d18; }
+}
+
+/* ── layout ─────────────────────────────────────────────────────────────── */
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: .75rem;
+  min-width: 0;
+}
+
+.panel h2 {
+  margin: .1rem 0 .5rem;
+  font-size: .8rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+
+/* Plotly sizes itself to the container, so the container needs a definite height
+   — a percentage or `auto` here leaves the plot taller than the panel and the
+   axis labels spill over whatever follows. */
+.plot { width: 100%; height: 540px; }
+.map  { width: 100%; height: 300px; }
+
+@media (max-width: 900px) { .plot { height: 420px; } }
+
+.note {
+  margin: .5rem .15rem 0;
+  color: var(--muted);
+  font-size: .8rem;
+}
+
+/* the stage caveat belongs ABOVE the plot: it changes how the numbers should be
+   read, so it cannot be something the reader finds afterwards */
+.note-top {
+  margin: 0 .15rem .5rem;
+  padding: .45rem .6rem;
+  border-left: 3px solid #e0a15a;
+  background: rgba(224, 161, 90, .09);
+  border-radius: 0 5px 5px 0;
+  color: var(--fg);
+}
+
+.error { color: #b3261e; padding: 1rem; }
+
+footer {
+  padding: .5rem 1.25rem 2rem;
+  color: var(--muted);
+  font-size: .8rem;
+}

@@ -1,0 +1,94 @@
+name: Refresh transect data
+
+# Rebuilds public/data/ (index.json, stations.json, sections/*.json) from the
+# latest CalCOFI integrated-DB release on public GCS, commits any change, and
+# then asks pages.yml to deploy it.
+#
+# Triggered on every DB release via `gh workflow run` from CalCOFI/workflows
+# (release promotion), plus a weekly fallback and a manual run.
+#
+# The last step is not optional. A push authenticated with GITHUB_TOKEN never
+# triggers workflows — GitHub's recursion guard — so pages.yml, which runs
+# `on: push`, would never see this job's commit. db-viz-station shipped that bug
+# for months: every refresh updated the repo and never the site, and new data
+# reached production only when a human happened to push something unrelated.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * 1'   # Mondays 10:00 UTC — freshness fallback
+  repository_dispatch:
+    types: [db-release]
+
+permissions:
+  contents: write
+  actions: write   # to dispatch pages.yml — see the note on the deploy step
+
+concurrency:
+  group: refresh-transects
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          curl -fsSL https://install.duckdb.org | sh
+          echo "$HOME/.duckdb/cli/latest" >> "$GITHUB_PATH"
+          pip install -r requirements.txt
+
+      - name: Rebuild transect data from the integrated DB
+        run: |
+          # build_sections.sql resolves the release itself from latest.txt, the
+          # same file every other consumer reads — never hardcode a release tag.
+          duckdb -c ".read scripts/build_sections.sql"
+
+          # Stamp the release BEFORE the reshaper runs: it copies this into
+          # index.json, and app.js appends ?v=<release> to every data fetch.
+          # GitHub Pages serves public/data/ with max-age=600 and no way to set
+          # headers, so without it a returning visitor can pair a fresh app.js
+          # with sections from a previous release.
+          REL=$(curl -s https://storage.googleapis.com/calcofi-db/ducklake/releases/latest.txt | tr -d '[:space:]')
+          echo "resolved release: $REL"
+          printf '{"release":"%s","built":"%s"}\n' \
+            "$REL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > public/data/version.json
+
+          python scripts/build_sections.py
+          du -sh public/data/sections
+          ls -la public/data/
+
+      - name: Commit if changed
+        id: commit
+        run: |
+          git config user.name  "calcofi-bot"
+          git config user.email "bot@calcofi.io"
+          # Every generated artifact must be listed here. Anything the build
+          # writes but this line omits is regenerated into the runner and then
+          # silently discarded, leaving the committed copy to drift.
+          # `sections/` is added as a directory so shards for NEW cruises are
+          # picked up, and `--all` inside it so shards for retired ones are
+          # removed rather than lingering.
+          git add --all public/data/sections
+          git add public/data/index.json public/data/stations.json \
+                  public/data/version.json
+          if git diff --cached --quiet; then
+            echo "no transect changes"
+          else
+            git commit -m "data: refresh transects from latest DB release"
+            git push
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy the refreshed data
+        if: steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"

@@ -32,9 +32,22 @@
     <span>Variable</span>
     <select id="sel-var"></select>
   </label>
+  <label class="ctl">
+    <span>Show</span>
+    <select id="sel-mode">
+      <option value="value">Measured value</option>
+      <option value="anomaly">Anomaly vs climatology</option>
+    </select>
+  </label>
   <label class="ctl ctl-depth">
     <span>Max depth <output id="out-depth">500</output> m</span>
     <input id="sel-depth" type="range" min="50" max="500" step="50" value="500">
+  </label>
+  <label class="ctl ctl-check" id="ctl-ruler">
+    <input id="sel-ruler" type="checkbox">
+    <span>Comparable x-axis
+      <abbr title="Draw the section against the full length of the line rather than only the stations this cruise occupied, so cruises covering different extents are comparable in width.">?</abbr>
+    </span>
   </label>
   <div class="spacer"></div>
   <div id="stage-badge" class="badge" hidden></div>
@@ -44,16 +57,111 @@
   <section class="panel panel-section">
     <p id="plot-note" class="note note-top" hidden></p>
     <div id="plot" class="plot"></div>
+    <p id="anom-note" class="note" hidden></p>
   </section>
   <aside class="panel panel-map">
     <h2>Where this is</h2>
     <div id="map" class="map"></div>
-    <p class="note">
-      The highlighted stations are the transect, ordered nearshore to offshore.
-      Grey points are the rest of the CalCOFI grid.
-    </p>
+    <ul class="legend" aria-label="Map legend">
+      <li><span class="key key-occ"></span>Occupied on this cruise</li>
+      <li><span class="key key-line"></span>On this line, not occupied</li>
+      <li><span class="key key-grid"></span>Elsewhere in the CalCOFI grid</li>
+    </ul>
+    <p class="note" id="map-note"></p>
   </aside>
 </main>
+
+<section class="panel panel-methods">
+  <details id="methods">
+    <summary><h2>Methods &amp; caveats</h2></summary>
+
+    <h3>What a transect is here</h3>
+    <p>
+      A transect is <strong>one CalCOFI line, ordered by station number
+      ascending</strong> — nearshore to offshore. No start and end station to
+      pick, which is what lets every line × cruise be drawn automatically.
+      Deliberately <em>not</em> the order stations were occupied: that is the
+      ship's track, so its direction is whichever way the ship steamed, and it is
+      missing on roughly half the database's cast records.
+    </p>
+    <p>
+      Values are averaged into <strong>5&nbsp;m depth bins to 500&nbsp;m</strong>.
+      CTD sensors sample continuously, so binning is not merely compression —
+      grouping by exact depth would deduplicate almost nothing, and the
+      native-resolution jaggedness is sensor precision rather than signal.
+      The colour field between stations is interpolated by the plotting library
+      for legibility; only the station columns are measurements.
+    </p>
+
+    <h3>Two horizontal rulers</h3>
+    <p>
+      By default the x-axis measures <strong>between the stations this cruise
+      actually occupied</strong>, so the section fills the plot and the data is as
+      large as it can be. <strong>Comparable x-axis</strong> instead measures each
+      station's distance along the <em>full</em> line, so two cruises that sampled
+      different extents are directly comparable in width — at the cost of blank
+      space where a cruise stopped short.
+    </p>
+    <p>
+      This is not cosmetic. Line 93.3 has not been sampled past station 90 since
+      January 2025, though 113 of the 130 cruises before that reached station 120.
+      Under the default ruler a recent section is drawn the same width as a
+      historical one covering far more ocean, and comparing the two by eye
+      overstates recent gradients.
+    </p>
+
+    <h3 id="methods-baseline">Anomalies and the baseline</h3>
+    <p id="baseline-text"></p>
+    <p>
+      The climatology is a <strong>plain mean per station, 5&nbsp;m depth bin and
+      calendar month</strong> across the baseline years — the finest grouping
+      CalCOFI's sampling design supports, since quarterly-ish cruises over decades
+      give many <em>years</em> per calendar month at a station but only a handful
+      of days. The anomaly is the measured value minus that mean.
+    </p>
+    <p>
+      Rudnick et&nbsp;al. (2017) fit annual and semiannual harmonics for the
+      <a href="https://spraydata.ucsd.edu/products/cugn-climatology/">CUGN glider
+      climatology</a>, which suits near-continuous glider sampling. CalCOFI's is
+      episodic and unevenly spaced, so a monthly mean is used instead: defensible,
+      and legible enough that a reader can say exactly what the anomaly is a
+      departure from.
+    </p>
+    <p>
+      A cell whose baseline has fewer than the minimum number of observations
+      is left <strong>blank, not zero</strong>. An unsampled baseline is not a zero
+      anomaly, and colouring it "normal" would claim knowledge of somewhere never
+      measured. Blank areas in the anomaly view are therefore gaps in the
+      <em>baseline</em>, not in this cruise.
+    </p>
+
+    <h3>Processing stage</h3>
+    <p>
+      Each cruise carries the stage of the CTD product it came from. The two
+      preliminary tiers are different in a way that matters: a
+      <strong>CTD-only</strong> cruise has not been through the bottle merge, so
+      the bottle-corrected salinity, oxygen and chlorophyll <em>do not exist</em>
+      for it and the uncorrected sensor series are shown instead. A
+      <strong>CTD&nbsp;&amp;&nbsp;bottle</strong> cruise has been merged but may
+      still change after post-cruise calibration.
+    </p>
+
+    <h3>Source</h3>
+    <p>
+      Everything above is built by two scripts, run weekly and on each database
+      release:
+      <a href="https://github.com/CalCOFI/ctd-transects/blob/main/scripts/build_sections.sql">build_sections.sql</a>
+      (extraction, binning, climatology, anomaly) and
+      <a href="https://github.com/CalCOFI/ctd-transects/blob/main/scripts/build_sections.py">build_sections.py</a>
+      (reshaping to the matrices this page draws). The same definitions are
+      available in R as
+      <a href="https://github.com/CalCOFI/calcofi4r/blob/main/R/transect.R"><code>calcofi4r</code></a>'s
+      <code>cc_transect_section()</code>, <code>cc_climatology()</code> and
+      <code>cc_anomaly()</code>, for anyone who would rather work from the
+      database directly.
+    </p>
+  </details>
+</section>
 
 <footer>
   <p>

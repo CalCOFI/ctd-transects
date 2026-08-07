@@ -74,12 +74,20 @@ const RAMP_DIV_DARK = [
 
 const DIVERGING = new Set(["temperature_ave"]);
 
+/* An ANOMALY is polarity, not magnitude — above or below normal — so it always
+ * gets the diverging ramp with the neutral pinned to zero, whatever the variable.
+ * Pinning matters: left to autoscale, a section that happens to be warm
+ * throughout would put the neutral at its own mean and paint the coolest part of
+ * a uniformly-warm cruise blue. `zmid` does the pinning; the ramp is the same
+ * one temperature uses so the two views read consistently. */
+
 const darkMode = () =>
   window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
-function scaleFor(varName) {
-  if (!DIVERGING.has(varName)) return RAMP_SEQ;
-  return darkMode() ? RAMP_DIV_DARK : RAMP_DIV_LIGHT;
+function scaleFor(varName, mode) {
+  if (mode === "anomaly" || DIVERGING.has(varName))
+    return darkMode() ? RAMP_DIV_DARK : RAMP_DIV_LIGHT;
+  return RAMP_SEQ;
 }
 
 /* Dark mode is selected, not flipped: the ramps keep their poles and only the
@@ -128,12 +136,20 @@ function varLabel(v) {
 
 function readURL() {
   const p = new URLSearchParams(location.search);
-  return { line: p.get("line"), cruise: p.get("cruise"), var: p.get("var") };
+  return {
+    line: p.get("line"), cruise: p.get("cruise"), var: p.get("var"),
+    mode: p.get("mode"),
+    // absent means the default, which is the OCCUPIED ruler: show the data as
+    // large as it can be drawn, and let comparison be the thing you opt into
+    ruler: p.get("ruler") === "line" ? "line" : "occupied",
+  };
 }
 
 function writeURL(sel) {
   const p = new URLSearchParams(
     { line: sel.line, cruise: sel.cruise, var: sel.var });
+  if (sel.mode === "anomaly") p.set("mode", "anomaly");
+  if (sel.ruler === "line") p.set("ruler", "line");
   history.replaceState(null, "", `${location.pathname}?${p}`);
 }
 
@@ -211,19 +227,35 @@ function resolve(sel) {
     const alt = state.index.variables.find((x) => x.prefer === sel.var);
     v = (alt && vars.find((x) => x.var === alt.var)) || vars[0];
   }
-  return { line: line.line, cruise: cruise.cruise_key, var: v ? v.var : null };
+  // mode and ruler are carried through untouched: they are view state, valid for
+  // any selection, and dropping them here silently reverted the URL to the
+  // defaults on every render
+  return { line: line.line, cruise: cruise.cruise_key, var: v ? v.var : null,
+           mode: sel.mode === "anomaly" ? "anomaly" : "value",
+           ruler: sel.ruler === "line" ? "line" : "occupied" };
 }
 
 /* ── the section plot ────────────────────────────────────────────────────── */
 
-function drawSection(shard, varName, maxDepth) {
+function drawSection(shard, varName, maxDepth, mode, ruler) {
   const meta = state.index.variables.find((v) => v.var === varName);
-  const x = shard.stations.map((s) => s.dist_km);
+  const anom = mode === "anomaly";
+
+  /* Which ruler. `line_dist_km` is each station's distance along the full line;
+   * it is null where the bathymetry build has no entry for a station, and a
+   * partly-null axis is worse than the wrong one, so fall back wholesale. */
+  const haveLine = shard.stations.every((s) => s.line_dist_km != null);
+  const useLine = ruler === "line" && haveLine;
+  const x = shard.stations.map((s) => (useLine ? s.line_dist_km : s.dist_km));
+
   const keep = shard.depths.map((d, i) => [d, i]).filter(([d]) => d <= maxDepth);
   const y = keep.map(([d]) => d);
-  const z = keep.map(([, i]) => shard.vars[varName][i]);
+  const grid = anom ? (shard.anom || {})[varName] : shard.vars[varName];
+  const z = grid ? keep.map(([, i]) => grid[i]) : keep.map(() => x.map(() => null));
 
   const t = theme();
+  const units = meta.units || "";
+  const zlabel = anom ? `${meta.label} anomaly` : meta.label;
 
   const traces = [{
     type: "heatmap",
@@ -231,15 +263,34 @@ function drawSection(shard, varName, maxDepth) {
     // zsmooth is what replaces an interpolation step: the renderer resamples the
     // station x depth matrix into the smooth field an ODV-style section wants
     zsmooth: "best",
-    colorscale: scaleFor(varName),
+    colorscale: scaleFor(varName, mode),
+    // zero is NORMAL, and it must sit on the neutral wherever the data lands —
+    // otherwise a uniformly warm cruise paints its least-warm part blue
+    ...(anom ? { zmid: 0 } : {}),
+    /* connectgaps bridges a station that missed a depth bin, and it must stay ON
+     * in both views.
+     *
+     * The tempting reading — "a gap in the anomaly means no baseline, so show
+     * it" — is wrong twice. First, `obs` carries the THINNED CTD series (a 10 m
+     * grid plus RDP inflection points plus bottle depths), so most holes in the
+     * matrix are depths this cast simply has no scan at, in the value view
+     * exactly as much as in the anomaly view; leaving them open reads as missing
+     * baseline when it is missing sampling. Second, it is pathological: the
+     * contour trace below tracing a matrix that sparse locked the page for tens
+     * of seconds and had to be killed.
+     *
+     * How much of the section actually HAS a baseline is reported as a number in
+     * the note under the plot instead, which says it precisely rather than
+     * leaving the reader to estimate blank area by eye. */
     connectgaps: true,
     hovertemplate:
       "%{customdata}<br>Depth: %{y} m<br>" +
-      `${meta.label}: %{z}${meta.units ? " " + meta.units : ""}<extra></extra>`,
+      `${zlabel}: %{z}${units ? " " + units : ""}<extra></extra>`,
     customdata: z.map((row) =>
       row.map((_, j) => `Station ${shard.stations[j].sta} · ${x[j].toFixed(0)} km`)),
     colorbar: {
-      title: { text: meta.units || "", side: "right" },
+      title: { text: anom ? (units ? "\u0394 " + units : "\u0394") : units,
+               side: "right" },
       thickness: 12, outlinewidth: 0, tickfont: { color: t.ink, size: 11 },
       titlefont: { color: t.ink, size: 11 },
     },
@@ -264,7 +315,11 @@ function drawSection(shard, varName, maxDepth) {
    * a single triangle 74 km wide and 1.5 km tall, because its neighbours are
    * 37 km away in deep water — terrain that does not exist, sitting right where
    * the thermocline is read. */
-  const fl = shard.floor;
+  /* Under the comparable ruler the x-axis IS along-line distance, so the floor
+   * must come from the line's own profile (carried once in index.json) rather
+   * than from the copy warped onto this cruise's occupied stations — that copy
+   * would put the shelf break tens of km from where it is. */
+  const fl = useLine ? (lineByName(shard.line) || {}).floor : shard.floor;
   if (fl && fl.dist_km.length > 1) {
     const n = fl.dist_km.length;
     traces.push({
@@ -298,18 +353,30 @@ function drawSection(shard, varName, maxDepth) {
     // panel and lands on top of the map
     margin: { l: 58, r: 86, t: 44, b: 52 },
     title: {
-      text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${meta.label}`,
+      text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${zlabel}`,
       font: { size: 15, color: t.ink },
     },
     font: { color: t.ink },
     xaxis: {
-      title: { text: "Distance offshore (km)", font: { size: 12 } },
+      title: {
+        text: useLine ? "Distance along line (km)" : "Distance offshore (km)",
+        font: { size: 12 },
+      },
       zeroline: false, gridcolor: t.grid,
-      range: [Math.min(...x), Math.max(...x)],
+      // On the shared ruler the range is the LINE's full extent, not this
+      // cruise's — an axis that resizes with the cruise is not a comparison.
+      range: useLine
+        ? [0, lineExtent(shard.line) ?? Math.max(...x)]
+        : [Math.min(...x), Math.max(...x)],
     },
     yaxis: {
       title: { text: "Depth (m)", font: { size: 12 } },
       autorange: "reversed", range: [maxDepth, 0], gridcolor: t.grid,
+      // depth 0 IS the y-origin, so Plotly's zeroline draws a dark rule right
+      // along the sea surface. It is invisible under a full-width section and
+      // very visible under the comparable ruler, where it runs on alone past the
+      // last station the cruise occupied and reads as data.
+      zeroline: false,
     },
     plot_bgcolor: t.panel,
     paper_bgcolor: "rgba(0,0,0,0)",
@@ -320,14 +387,29 @@ function drawSection(shard, varName, maxDepth) {
     { responsive: true, displaylogo: false });
 }
 
+function lineExtent(name) {
+  const l = lineByName(name);
+  return l && l.extent_km != null ? l.extent_km : null;
+}
+
 /* ── the map ─────────────────────────────────────────────────────────────── */
 
 /* Plotly's built-in geo layer draws Natural Earth coastlines locally, so the map
  * needs no tile server and no second mapping library. */
+/* Three classes, because two conflate the question a reader actually has.
+ *
+ * A station missing from the section is missing for one of two entirely
+ * different reasons: it is on ANOTHER line (irrelevant), or it is on THIS line
+ * and this cruise did not reach it (a coverage gap, and the reason the section
+ * stops where it does). Drawn identically, the shortened line 93.3 transects
+ * since 2025-01 look like the line simply ends at station 90. */
 function drawMap(shard) {
   const dark = darkMode();
   const on = new Set(shard.stations.map((s) => s.grid_key));
-  const off = state.stations.filter((s) => !on.has(s.grid_key));
+  const onLine = state.stations.filter(
+    (s) => s.line === shard.line && !on.has(s.grid_key));
+  const off = state.stations.filter(
+    (s) => s.line !== shard.line && !on.has(s.grid_key));
 
   const traces = [{
     type: "scattergeo",
@@ -336,6 +418,17 @@ function drawMap(shard) {
     marker: { size: 3, color: dark ? "rgba(150,160,172,0.5)"
                                    : "rgba(110,122,134,0.55)" },
     hoverinfo: "skip", showlegend: false,
+  }, {
+    // on this line but not occupied: hollow, in the transect's own hue, so it
+    // reads as "part of this transect, absent" rather than as another line
+    type: "scattergeo",
+    lon: onLine.map((s) => s.lon), lat: onLine.map((s) => s.lat),
+    mode: "markers",
+    marker: { size: 7, color: "rgba(0,0,0,0)",
+              line: { color: "#e34948", width: 1.5 } },
+    text: onLine.map((s) => `Station ${s.sta} · not occupied on this cruise`),
+    hovertemplate: "%{text}<extra></extra>",
+    showlegend: false,
   }, {
     // the transect, drawn in the warm pole of the diverging ramp so it reads as
     // "the selected thing" against the grey grid without introducing a new hue
@@ -350,6 +443,12 @@ function drawMap(shard) {
     hovertemplate: "%{text}<extra></extra>",
     showlegend: false,
   }];
+
+  const nMissed = onLine.length;
+  $("map-note").textContent = nMissed
+    ? `This cruise occupied ${shard.stations.length} of the ` +
+      `${shard.stations.length + nMissed} stations on line ${shard.line}.`
+    : `This cruise occupied every station on line ${shard.line}.`;
 
   Plotly.react($("map"), traces, {
     margin: { l: 0, r: 0, t: 0, b: 0 },
@@ -373,7 +472,6 @@ function drawMap(shard) {
 async function render(sel) {
   sel = resolve(sel);
   const { cruise } = syncControls(sel);
-  writeURL(sel);
 
   const shard = await getJSON("data/" + cruise.file);
   state.shard = shard;
@@ -388,9 +486,74 @@ async function render(sel) {
   if (STAGE_NOTE[stage]) { note.textContent = STAGE_NOTE[stage]; note.hidden = false; }
   else note.hidden = true;
 
+  // Offer the anomaly view only where a baseline exists for this variable. A
+  // mode picker that silently draws an empty panel is worse than one that says
+  // the anomaly is unavailable.
+  const zv = shard.vars[sel.var];
+  const za = shard.anom && shard.anom[sel.var];
+  let nVal = 0, nAnom = 0;
+  if (zv) {
+    for (let i = 0; i < zv.length; i++)
+      for (let j = 0; j < zv[i].length; j++)
+        if (zv[i][j] != null) {
+          nVal++;
+          if (za && za[i] && za[i][j] != null) nAnom++;
+        }
+  }
+  const hasAnom = nAnom > 0;
+  const pctAnom = nVal ? Math.round((100 * nAnom) / nVal) : 0;
+  const modeEl = $("sel-mode");
+  modeEl.options[1].disabled = !hasAnom;
+  const mode = hasAnom && sel.mode === "anomaly" ? "anomaly" : "value";
+  modeEl.value = mode;
+
+  const anomNote = $("anom-note");
+  if (mode === "anomaly") {
+    const b = state.index.baseline;
+    anomNote.textContent =
+      `Departure from the ${b.yr_min}–${b.yr_max} mean for this station, depth ` +
+      `and calendar month (${b.n_cruises} cruises, minimum ${b.min_n} ` +
+      `observations per cell). ${pctAnom}% of this section's measurements have ` +
+      `such a baseline; the rest are drawn from neighbouring values and should ` +
+      `not be read closely. See Methods below.`;
+    anomNote.hidden = false;
+  } else if (!hasAnom && sel.mode === "anomaly") {
+    anomNote.textContent =
+      "No climatological baseline covers this variable, so the anomaly view is " +
+      "unavailable; showing measured values.";
+    anomNote.hidden = false;
+  } else {
+    anomNote.hidden = true;
+  }
+
+  // The comparable ruler needs a full-line distance on every station
+  const haveLine = shard.stations.every((s) => s.line_dist_km != null);
+  $("sel-ruler").disabled = !haveLine;
+  $("sel-ruler").checked = haveLine && sel.ruler === "line";
+  $("ctl-ruler").title = haveLine ? "" :
+    "No along-line distances for this line, so the comparable axis is unavailable.";
+
+  // written now, not before the fetch: `mode` may have been downgraded to
+  // "value" above, and a URL promising an anomaly that is not on screen is a
+  // link that does not reproduce what the sender saw
+  writeURL({ ...sel, mode, ruler: $("sel-ruler").checked ? "line" : "occupied" });
+
   const maxDepth = Number($("sel-depth").value);
-  drawSection(shard, sel.var, maxDepth);
+  drawSection(shard, sel.var, maxDepth, mode,
+              $("sel-ruler").checked ? "line" : "occupied");
   drawMap(shard);
+
+  /* Plotly measures its container at draw time, and on the FIRST render that is
+   * before the map, the notes and the badge have settled the grid — so the plot
+   * was laid out a little wider than its panel and the colorbar landed on top of
+   * the map until the user happened to resize the window. Re-measure once the
+   * browser has finished this frame. */
+  requestAnimationFrame(() => {
+    for (const id of ["plot", "map"]) {
+      const el = $(id);
+      if (el && el.offsetWidth) Plotly.Plots.resize(el);
+    }
+  });
 }
 
 function currentSel() {
@@ -398,6 +561,8 @@ function currentSel() {
     line: $("sel-line").value,
     cruise: $("sel-cruise").value,
     var: $("sel-var").value,
+    mode: $("sel-mode").value,
+    ruler: $("sel-ruler").checked ? "line" : "occupied",
   };
 }
 
@@ -419,15 +584,34 @@ async function init() {
       line: url.line || state.index.default.line,
       cruise: url.cruise || state.index.default.cruise_key,
       var: url.var || state.index.default.var,
+      mode: url.mode || "value",
+      ruler: url.ruler,
     };
 
-    for (const id of ["sel-line", "sel-cruise", "sel-var"]) {
+    const b = state.index.baseline;
+    if (b) {
+      $("baseline-text").innerHTML =
+        `Anomalies on this page are differences from a <strong>${b.yr_min}–` +
+        `${b.yr_max}</strong> baseline, built from ${b.n_cruises} cruises and ` +
+        `${b.n_cells.toLocaleString()} station × depth × month cells, each ` +
+        `requiring at least ${b.min_n} observations. That window is long enough ` +
+        `to average over the 1997–99 El Niño and La Niña, and it ends before the ` +
+        `2014–16 marine heatwave, so the heatwave and everything after it read ` +
+        `as departures rather than being folded into the normal. It is not a ` +
+        `30-year WMO normal: the 1 m-binned CTD record does not reach back far ` +
+        `enough for one.`;
+    }
+
+    for (const id of ["sel-line", "sel-cruise", "sel-var", "sel-mode"]) {
       $(id).addEventListener("change", () => render(currentSel()));
     }
+    $("sel-ruler").addEventListener("change", () => render(currentSel()));
     $("sel-depth").addEventListener("input", (e) => {
       $("out-depth").textContent = e.target.value;
-      if (state.shard) drawSection(state.shard, $("sel-var").value,
-                                   Number(e.target.value));
+      if (state.shard) {
+        const c = currentSel();
+        drawSection(state.shard, c.var, Number(e.target.value), c.mode, c.ruler);
+      }
     });
 
     await render(sel);

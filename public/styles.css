@@ -185,3 +185,95 @@ footer {
   color: var(--muted);
   font-size: .8rem;
 }
+
+/* ── the comparable-axis checkbox ───────────────────────────────────────────
+   A checkbox rather than a second dropdown because it is a modifier of the view,
+   not a choice between two views — and because "off" is the default and should
+   look like it. */
+.ctl-check {
+  flex-direction: row;
+  align-items: center;
+  gap: .45rem;
+  padding-top: 1.15rem;   /* baseline-align with the labelled controls */
+}
+.ctl-check input { accent-color: var(--accent); margin: 0; }
+.ctl-check > span { color: var(--muted); font-size: .78rem; }
+.ctl-check:has(input:disabled) { opacity: .45; }
+.ctl-check abbr {
+  cursor: help;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 1.05em; height: 1.05em;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: .68rem; text-decoration: none;
+}
+
+/* ── map legend ─────────────────────────────────────────────────────────────
+   Three keys, because "not occupied on this cruise" and "on another line" are
+   different facts and the first one explains why the section stops where it
+   does. Identity is never colour alone here — each key is labelled. */
+.legend {
+  list-style: none;
+  margin: .5rem .15rem 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem 1rem;
+  font-size: .76rem;
+  color: var(--muted);
+}
+.legend li { display: flex; align-items: center; gap: .4rem; }
+.key {
+  width: 11px; height: 11px; border-radius: 50%;
+  flex: 0 0 auto;
+}
+.key-occ  { background: #e34948; }
+.key-line { background: transparent; border: 1.5px solid #e34948; }
+.key-grid { background: rgba(110,122,134,.55); width: 7px; height: 7px; }
+@media (prefers-color-scheme: dark) {
+  .key-grid { background: rgba(150,160,172,.5); }
+}
+
+/* ── methods ────────────────────────────────────────────────────────────────
+   An accordion, closed by default: the reader who just wants the section is not
+   made to scroll past a page of prose, and the reader who needs to know what a
+   baseline is does not have to leave for the repo to find out. */
+.panel-methods { margin: 0 1.25rem 1.25rem; }
+#methods > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: .3rem 0;
+}
+#methods > summary::-webkit-details-marker { display: none; }
+#methods > summary h2 {
+  display: inline;
+  font-size: .95rem;
+  font-weight: 600;
+}
+#methods > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1rem;
+  color: var(--muted);
+  transition: transform .12s ease;
+}
+#methods[open] > summary::before { transform: rotate(90deg); }
+#methods h3 {
+  font-size: .85rem;
+  margin: 1.1rem 0 .35rem;
+}
+#methods p {
+  margin: 0 0 .6rem;
+  max-width: 68ch;      /* prose, not a full-width wall */
+  font-size: .84rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+#methods strong { color: var(--fg); font-weight: 600; }
+#methods code {
+  font-size: .95em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 .25em;
+}

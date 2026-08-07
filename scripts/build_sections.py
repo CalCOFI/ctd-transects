@@ -4,7 +4,7 @@
 
 Reads the `public/data/_*.parquet` intermediates and writes:
 
-    public/data/index.json                    lines, cruises, variables
+    public/data/index.json                    lines, cruises, variables, baseline
     public/data/stations.json                 the CalCOFI grid, for the map
     public/data/sections/{line}__{cruise}.json  one shard per transect
 
@@ -25,10 +25,26 @@ WHY SHARDS, AND WHY A MATRIX
     app hands the matrix to Plotly with zsmooth:"best" and lets the renderer
     interpolate. Same look, no numerical code in the client.
 
-DISTANCE
-    Cumulative great-circle distance between consecutive stations, nearshore
-    first — the section's x-axis. Baked here because it is a property of the
-    transect, not of the view.
+DISTANCE — TWO RULERS, BOTH BAKED
+    `dist_km` is cumulative great-circle distance between the stations THIS
+    cruise occupied, starting at 0. The section fills the plot, which is what you
+    want when reading one cruise.
+
+    `line_dist_km` is each station's distance along the FULL line from its most
+    inshore grid station, so every cruise on a line shares one ruler and their
+    widths are directly comparable.
+
+    Both ship, and the app toggles; neither can be derived in the browser from the
+    other. It is not cosmetic. Line 93.3 has not been sampled past station 90
+    since 2025-01, though 113 of the 130 cruises before it reached station 120 —
+    so under the default ruler a recent section is drawn the same width as a
+    historical one that covered 40% more ocean, and comparing them by eye
+    overstates recent gradients.
+
+ANOMALY
+    Each shard carries an `anom` matrix beside every `vars` matrix, differenced
+    against the monthly climatology built in build_sections.sql over the baseline
+    window stated there. Cells with no baseline are null, never 0.
 """
 
 import json
@@ -131,13 +147,20 @@ def slug(s):
 
 def main():
     sec = pd.read_parquet(DATA / "_sections.parquet")
+    anm = pd.read_parquet(DATA / "_anomaly.parquet")
+    bas = pd.read_parquet(DATA / "_baseline.parquet").iloc[0]
     sta = pd.read_parquet(DATA / "_stations.parquet")
     cru = pd.read_parquet(DATA / "_cruises.parquet")
     var = pd.read_parquet(DATA / "_variables.parquet")
     bathy = pd.read_csv("metadata/station_bathymetry.csv")
 
     sec["line_s"] = sec["line"].map(fmt_line)
+    anm["line_s"] = anm["line"].map(fmt_line)
     sta["line_s"] = sta["line"].map(fmt_line)
+
+    # anomaly indexed the same way the section grids are built, so the two
+    # matrices are filled in one pass per (line, cruise)
+    anm_by_sec = {k: v for k, v in anm.groupby(["line_s", "cruise_key"], sort=False)}
 
     sta = sta.merge(bathy[["grid_key", "bathy_m", "line_dist_km"]],
                     on="grid_key", how="left")
@@ -206,6 +229,11 @@ def main():
                 "lon": round(float(r["lon"]), 5),
                 "lat": round(float(r["lat"]), 5),
                 "dist_km": round(dist[i], 2),
+                # the shared full-line ruler; None where the bathymetry build has
+                # no entry for this station, in which case the app falls back to
+                # the occupied ruler rather than drawing a broken axis
+                "line_dist_km": (None if pd.isna(r["line_dist_km"])
+                                 else round(float(r["line_dist_km"]), 2)),
                 "bathy_m": (None if pd.isna(r["bathy_m"]) else float(r["bathy_m"])),
                 "datetime": (None if pd.isna(dt) else pd.Timestamp(dt).isoformat()),
             })
@@ -224,6 +252,20 @@ def main():
                     z[di][si] = None if pd.isna(val) else float(val)
             grids[v] = z
 
+        # z[depth][station] for the anomaly, same shape and same indices, so the
+        # app swaps one matrix for the other without touching x, y or stations
+        anoms = {}
+        ga = anm_by_sec.get((line_s, cruise_key))
+        if ga is not None:
+            for v, gv in ga.groupby("var", sort=False):
+                za = [[None] * n_sta for _ in DEPTHS]
+                for s_, d, val in zip(gv["sta"], gv["depth_m"], gv["anomaly"]):
+                    si = sta_ix.get(float(s_))
+                    di = depth_ix.get(int(d))
+                    if si is not None and di is not None:
+                        za[di][si] = None if pd.isna(val) else float(val)
+                anoms[v] = za
+
         knots_along = [x for x in st["line_dist_km"].tolist()]
         prof = None
         if not any(pd.isna(k) for k in knots_along):
@@ -237,6 +279,7 @@ def main():
             "stations": stations,
             "depths": DEPTHS,
             "vars": grids,
+            "anom": anoms,
             "floor": prof,
         }
 
@@ -251,17 +294,38 @@ def main():
             "data_stage": shard["data_stage"],
             "n_stations": n_sta,
             "vars": sorted(grids.keys()),
+            "anom_vars": sorted(anoms.keys()),
             "file": f"sections/{fn}",
         }
 
     # cruises newest first. cruise_key is YYYY-MM-NODC, so a plain reverse string
     # sort IS year-month descending — no date parsing, and it stays correct for
     # the 1993 cruises the Wilkinson archive adds.
+    # Full extent of each line's ruler, so the comparable x-axis is fixed for the
+    # line rather than derived from whichever cruise is on screen — the axis has to
+    # stay put when you change cruise or the comparison is not one.
+    line_extent = {}
+    line_floor = {}
+    for line_s, g in floor.groupby("line_s"):
+        line_extent[line_s] = round(float(g["line_dist_km"].max()), 2)
+        # The seafloor in the line's OWN coordinate, carried once per line rather
+        # than per shard. Each shard's `floor` is this profile warped onto that
+        # cruise's occupied x; under the comparable ruler the axis IS along-line
+        # distance, so the warped copy would place the bathymetry in the wrong
+        # place — visibly, as a shelf break tens of km from where it is.
+        g2 = g.dropna(subset=["bathy_m"]).sort_values("line_dist_km")
+        line_floor[line_s] = {
+            "dist_km": [round(float(v), 2) for v in g2["line_dist_km"]],
+            "bathy_m": [float(v) for v in g2["bathy_m"]],
+        }
+
     lines = []
     for line_s, cruises in index_lines.items():
         lines.append({
             "line": line_s,
             "core": line_s in CORE_LINES,
+            "extent_km": line_extent.get(line_s),
+            "floor": line_floor.get(line_s),
             "n_cruises": len(cruises),
             "cruises": sorted(cruises.values(),
                               key=lambda c: c["cruise_key"], reverse=True),
@@ -274,6 +338,15 @@ def main():
 
     index = {
         "release": release,
+        # stated in the app's methods panel; an anomaly whose baseline is not on
+        # screen is not interpretable
+        "baseline": {
+            "yr_min":    int(bas["yr_min"]),
+            "yr_max":    int(bas["yr_max"]),
+            "min_n":     int(bas["min_n"]),
+            "n_cells":   int(bas["n_cells"]),
+            "n_cruises": int(bas["n_cruises"]),
+        },
         "lines": lines,
         "variables": variables,
         "default": {
@@ -308,6 +381,9 @@ def main():
           f"(mean {total / max(n_written, 1) / 1e3:.0f} KB)")
     print(f"index    : {len(lines)} lines, {len(variables)} variables")
     print(f"stations : {len(stations_json)} grid stations")
+    print(f"baseline : {int(bas['yr_min'])}-{int(bas['yr_max'])}, "
+          f"{int(bas['n_cells']):,} cells from {int(bas['n_cruises'])} cruises "
+          f"(min_n={int(bas['min_n'])})")
 
 
 if __name__ == "__main__":

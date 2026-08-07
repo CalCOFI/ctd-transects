@@ -47,6 +47,15 @@ jobs:
 
       - name: Rebuild transect data from the integrated DB
         run: |
+          # git does not track empty directories, and public/data/ ships empty on
+          # purpose (the shards predating the 2026-08-06 data_stage split carry a
+          # vocabulary build_sections.py refuses). So in a fresh checkout the
+          # directory does not exist, and DuckDB's COPY writes a file — it does
+          # not mkdir -p — so the very first statement died with
+          #   IO Error: Cannot open file "public/data/_sections.parquet"
+          # build_sections.py creates it, but that runs too late to help.
+          mkdir -p public/data/sections
+
           # build_sections.sql resolves the release itself from latest.txt, the
           # same file every other consumer reads — never hardcode a release tag.
           duckdb -c ".read scripts/build_sections.sql"

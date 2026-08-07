@@ -1,0 +1,9 @@
+# Keeps public/data/ present in a fresh checkout.
+#
+# git does not track empty directories, and this one ships empty: the section
+# shards built before the 2026-08-06 data_stage split carry the retired bare
+# `preliminary`, which scripts/build_sections.py now refuses. CI (refresh.yml)
+# rebuilds them from the current release and commits the result.
+#
+# Without this file, build_sections.sql's first COPY fails in a fresh clone —
+# DuckDB's COPY writes a file, it does not create the parent directory.

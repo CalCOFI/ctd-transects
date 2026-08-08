@@ -8,6 +8,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit to deploy (default: head of the dispatched ref)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,7 +30,20 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      # Deploy an EXPLICIT commit when one is given, not whatever `main` resolves
+      # to now. refresh.yml pushes and then immediately dispatches this workflow,
+      # and GitHub's resolution of `--ref main` is not guaranteed to have caught
+      # up with that push: run 31184322676 pushed 2dccd93 and the pages run it
+      # dispatched 81s later checked out 3baec71, its own PRE-push SHA. It then
+      # uploaded the stale tree and reported success, so the site got a fresh
+      # Last-Modified wrapping old bytes and nothing anywhere went red.
+      #
+      # It is a race, not a deterministic failure — the 04:34 run the same day
+      # resolved correctly — which is worse: it goes green either way, and the
+      # only symptom is data that silently stops updating.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -94,10 +94,20 @@ jobs:
             git commit -m "data: refresh transects from latest DB release"
             git push
             echo "committed=true" >> "$GITHUB_OUTPUT"
+            # hand the deploy the exact SHA rather than letting it re-resolve
+            # `main`, which can still be the pre-push commit — see pages.yml
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
 
+      # `--ref main` selects the workflow FILE; `-f sha=` selects the tree it
+      # deploys. Both are needed: without the input, pages.yml checks out
+      # whatever main resolves to at dispatch time, which has already been
+      # observed to be this job's own pre-push commit.
       - name: Deploy the refreshed data
         if: steps.commit.outputs.committed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY" -f sha="$SHA"
+          echo "dispatched pages.yml for $SHA"

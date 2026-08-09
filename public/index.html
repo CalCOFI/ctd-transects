@@ -1,6 +1,33 @@
 <!doctype html>
 <html lang="en">
 <head>
+<!-- Google tag (gtag.js) — CalCOFI site property.
+     GENERATED/COPIED from CalCOFI/analytics → snippets/gtag-site.html.
+     Change only CONTENT_GROUP; keep the rest byte-identical across sites so
+     one snippet edit can be rolled out mechanically. `content_group` is what
+     the usage report at calcofi.io/analytics/ joins on. -->
+<script>
+  // Two guards, one flag:
+  //  - hostname: keeps local previews and forks out of the property, without
+  //    depending on a build-system flag (these sites are built five ways).
+  //  - navigator.webdriver: set by every WebDriver/CDP-controlled browser, so
+  //    Playwright, Puppeteer, Selenium and our own shot-scraper screenshots
+  //    stop counting. GA4's own bot list is user-agent based and never sees
+  //    them: they render the page and fire gtag exactly like a visitor, one
+  //    cookie-less fetch at a time, which turns a crawl into N one-page
+  //    "users" with no engagement.
+  window.__CC_GA = location.hostname.endsWith("calcofi.io")
+                   && !navigator.webdriver;
+</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-0HVK8TDMCF"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  if (window.__CC_GA) {
+    gtag('js', new Date());
+    gtag('config', 'G-0HVK8TDMCF', { content_group: 'ctd-transects' });
+  }
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CalCOFI CTD Transects</title>

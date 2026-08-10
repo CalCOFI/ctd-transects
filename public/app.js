@@ -237,6 +237,35 @@ function resolve(sel) {
 
 /* ── the section plot ────────────────────────────────────────────────────── */
 
+/* Contour levels, computed here rather than left to Plotly's `autocontour`.
+ *
+ * `autocontour` is one render BEHIND under `Plotly.react`: it keeps the levels it
+ * derived for the PREVIOUS z. Every switch that moves the range — variable,
+ * value <-> anomaly, and often line or cruise — therefore drew the new field at
+ * the old field's levels, and where the two ranges do not overlap that is not a
+ * subtle error: temperature (6-16 degC) drawn at the anomaly levels (-2..3.5)
+ * yields ZERO lines and ZERO labels, and the anomaly view drawn at 6-16 likewise.
+ * The section came up bare and the next unrelated interaction "fixed" it.
+ *
+ * Deriving the levels from the z actually being drawn removes the state that
+ * could go stale. The rule reproduces what `autocontour` picks when it is given
+ * the right data — ~15 intervals snapped to a 2/5/10 x 10^n step — so the
+ * levels are unchanged in every case that was already working. */
+function contourLevels(z) {
+  let lo = Infinity, hi = -Infinity;
+  for (const row of z) for (const v of row)
+    if (v != null && isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  if (!(hi > lo)) return {};      // all-null or flat: nothing to contour
+
+  const rough = (hi - lo) / 15;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const size = [2, 5, 10].find((m) => rough <= m * mag) * mag;
+  // the step lands on values like 0.30000000000000004, which reach the labels
+  const snap = (v) => +v.toPrecision(12);
+  return { start: snap(Math.ceil(lo / size) * size),
+           end:   snap(Math.floor(hi / size) * size), size: snap(size) };
+}
+
 function drawSection(shard, varName, maxDepth, mode, ruler) {
   const meta = state.index.variables.find((v) => v.var === varName);
   const anom = mode === "anomaly";
@@ -300,7 +329,19 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     // secondary encoding that keeps the plot usable without colour.
     type: "contour",
     x, y, z,
-    contours: { coloring: "none", showlabels: true,
+    /* Same reason as the heatmap above — and it must be stated again here,
+     * because contour DEFAULTS it to false and the two traces draw the same z.
+     *
+     * A contour trace with gaps does not merely skip them: it clips the whole
+     * trace group to a mask of the cells that have data. That mask cuts LINES
+     * AND LABELS, mid-glyph — the labels came out sliced in half horizontally,
+     * and every isotherm was shredded into dozens of stubs that read as noise
+     * in the near-uniform deep water. It looks like the contours are being
+     * painted over by something on top of them; nothing is. The holes are the
+     * thinned series' unsampled depths, exactly as for the heatmap, so bridge
+     * them the same way and the two traces describe the same field. */
+    connectgaps: true,
+    contours: { ...contourLevels(z), coloring: "none", showlabels: true,
                 labelfont: { size: 10, color: t.ink } },
     line: { color: t.contour, width: 1 },
     showscale: false,       // without this the contour adds a SECOND colorbar

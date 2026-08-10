@@ -165,7 +165,7 @@ def main():
     sta = sta.merge(bathy[["grid_key", "bathy_m", "line_dist_km"]],
                     on="grid_key", how="left")
 
-    # the seafloor sampled every 2 km along each line, keyed by distance from the
+    # the seafloor sampled every 500 m along each line, keyed by distance from the
     # line's most-inshore grid station
     floor = pd.read_csv("metadata/line_bathymetry.csv")
     floor["line_s"] = floor["line"].map(fmt_line)

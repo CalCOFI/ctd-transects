@@ -67,17 +67,28 @@ manual dispatch, and on a `db-release` `repository_dispatch` fired by
 ### Bathymetry is a committed input, not a build output
 
 `metadata/station_bathymetry.csv` and `metadata/line_bathymetry.csv` are generated
-**by hand** with `scripts/build_station_bathymetry.R`, which needs the GEBCO raster
-from a sibling `apps/ctd-viz` checkout. They only go stale if the CalCOFI grid
-changes, which it does not, so CI does not carry a raster or a GDAL stack to
-recompute numbers that never move.
+**by hand** with `scripts/build_station_bathymetry.R`. They only go stale if the
+CalCOFI grid changes, which it does not, so CI does not carry a raster or a GDAL
+stack to recompute numbers that never move.
 
-`line_bathymetry.csv` samples the seafloor every 2 km **along** each line rather
-than once per station. Sampling only at stations and joining the points invents
-terrain: on line 86.7, station 50 sits on a Channel Islands bank at 80 m with
-neighbours 37 km away in 1,200–1,650 m of water, and the straight-line version drew
-that as a single triangle 74 km wide and 1.5 km tall — right where a reader is
-looking for the thermocline.
+`line_bathymetry.csv` samples the seafloor every **500 m along** each line rather
+than once per station, via `calcofi4r::cc_transect_bathy()` — the same function
+`apps/ctd-viz` draws its silhouette with, so the two apps cannot show different
+seafloors. `calcofi4r::cc_bathy()` fetches the GEBCO 2025 crop from
+`gs://calcofi-db/bathymetry/` and caches it; the script no longer needs a sibling
+`apps/ctd-viz` checkout.
+
+Sampling only at stations and joining the points invents terrain: on line 86.7,
+station 50 sits on a Channel Islands bank at 80 m with neighbours 37 km away in
+1,200–1,650 m of water, and the straight-line version drew that as a single
+triangle 74 km wide and 1.5 km tall — right where a reader is looking for the
+thermocline.
+
+Too coarse an interval fails the same way, more quietly. The first fix here
+sampled at 2 km against a grid whose own cell is ~390 m, and line 93.3 still drew
+three spikes: Fortymile Bank is a ~14 km rise from 652 m to a 178 m crest, and at
+2 km it is four soundings (385, 344, 238, 370 m). 500 m keeps every cell the line
+crosses without implying detail GEBCO does not have.
 
 ## Data stages
 

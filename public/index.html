@@ -162,6 +162,27 @@
       <em>baseline</em>, not in this cruise.
     </p>
 
+    <h3>The seafloor, and why it looks like spikes</h3>
+    <p>
+      The grey silhouette is <a href="https://www.gebco.net/data_and_products/gridded_bathymetry_data/">GEBCO
+      2025</a> sampled <strong>every 500&nbsp;m along the line</strong>, not once
+      per station. Sampling only at stations and joining the soundings does not
+      simplify the terrain, it draws different terrain: on line 86.7 station 50
+      sits on a Channel Islands bank at 80&nbsp;m with neighbours 37&nbsp;km away
+      in 1,200–1,650&nbsp;m of water, which came out as one triangle 74&nbsp;km
+      wide and 1.5&nbsp;km tall.
+    </p>
+    <p>
+      The banks that remain are real. Line 93.3 crosses the Southern California
+      Borderland, and the three rises near 55, 74 and 130&nbsp;km offshore are
+      Thirtymile Bank, Fortymile Bank and the Tanner–Cortes rise — the middle one
+      reaching 178&nbsp;m. They look like spikes because <strong>the vertical
+      scale is exaggerated roughly a thousandfold</strong>: the panel spans
+      hundreds of kilometres across and 500&nbsp;m down. A 7&nbsp;km-wide bank
+      rising 470&nbsp;m is drawn about twenty pixels wide and two hundred tall.
+      Nothing here is a seamount in the shape the plot suggests.
+    </p>
+
     <h3>Processing stage</h3>
     <p>
       Each cruise carries the stage of the CTD product it came from. The two
@@ -185,7 +206,10 @@
       <a href="https://github.com/CalCOFI/calcofi4r/blob/main/R/transect.R"><code>calcofi4r</code></a>'s
       <code>cc_transect_section()</code>, <code>cc_climatology()</code> and
       <code>cc_anomaly()</code>, for anyone who would rather work from the
-      database directly.
+      database directly. The seafloor comes from the same package —
+      <code>cc_transect_bathy()</code>, which
+      <a href="https://calcofi.io/ctd/">ctd-viz</a> draws its silhouette with
+      too, so the two cannot disagree about where the bottom is.
     </p>
   </details>
 </section>

@@ -351,11 +351,15 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 
   /* Seafloor silhouette, clipped to the plotted depth range.
    *
-   * `floor` is GEBCO sampled every 2 km ALONG the line, not one sounding per
+   * `floor` is GEBCO sampled every 500 m ALONG the line, not one sounding per
    * station. Station-only sampling drew the Channel Islands bank on line 86.7 as
    * a single triangle 74 km wide and 1.5 km tall, because its neighbours are
    * 37 km away in deep water — terrain that does not exist, sitting right where
-   * the thermocline is read. */
+   * the thermocline is read.
+   *
+   * 2 km was not enough either: GEBCO's own cell is ~390 m, so line 93.3's banks
+   * came through as three spikes. Fortymile Bank is a ~14 km rise to a 178 m
+   * crest that 2 km sampling reduced to four soundings. */
   /* Under the comparable ruler the x-axis IS along-line distance, so the floor
    * must come from the line's own profile (carried once in index.json) rather
    * than from the copy warped onto this cruise's occupied stations — that copy

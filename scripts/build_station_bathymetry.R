@@ -6,7 +6,7 @@
 # are only stale if the CalCOFI grid itself changes, which it does not.
 #
 #   metadata/station_bathymetry.csv  one row per grid station
-#   metadata/line_bathymetry.csv     the seafloor sampled every 2 km ALONG each
+#   metadata/line_bathymetry.csv     the seafloor sampled every 500 m ALONG each
 #                                    line, which is what the app draws
 #
 # WHY THE DENSE PROFILE
@@ -18,47 +18,48 @@
 #   does not exist, at the exact depth range where someone is reading the
 #   thermocline.
 #
-#   apps/ctd-viz has the same limitation and documents it (get_transect_bathy()
-#   deliberately does not interpolate between casts), but it draws a line rather
-#   than a filled silhouette, so the artefact is less assertive there.
+# WHY 500 m AND NOT 2 km
+#   The first version of this file sampled at 2 km and still drew spikes, because
+#   GEBCO's own cell is ~390 m — four fifths of what the grid knows was being
+#   thrown away. Line 93.3 is that case: Fortymile Bank is a ~14 km rise from
+#   652 m to a 178 m crest, and at 2 km it is four soundings (385, 344, 238,
+#   370 m) drawn as a triangle. Clipping the plot at 500 m makes it worse, since
+#   the depth at which the silhouette crosses the axis limit can then be off by a
+#   whole sample step, so the flanks come out vertical.
 #
-# Why not sample GEBCO in CI? The refresh workflow would then need the 4.28 MB
-# GeoTIFF (apps/ctd-viz/data/gebco_calcofi.tif, itself a crop of a much larger
-# source) plus terra and its GDAL stack, on every run, to recompute 218 numbers
-# that never change. apps/ctd-viz ships that raster inside the app and extracts
-# per transect at request time because it lets the user pick arbitrary transects;
-# here the station set is fixed, so the sensible move is to bake it once.
+#   500 m sits just above the native cell: every cell the line crosses is seen,
+#   without implying detail GEBCO does not have. Cost is ~15k rows across 11
+#   lines (was ~3.9k) — nothing, for the file the whole silhouette is built from.
+#
+# THE SAMPLING ITSELF LIVES IN calcofi4r
+#   calcofi4r::cc_transect_bathy() — apps/ctd-viz draws the same silhouette from
+#   the same function, so the two cannot drift again, and cc_bathy() fetches the
+#   GEBCO crop from gs://calcofi-db/bathymetry/ rather than this script reaching
+#   into a sibling app checkout for it.
+#
+# Why not sample in CI? The refresh workflow would need the 4.3 MB GeoTIFF plus
+# terra and its GDAL stack, on every run, to recompute numbers that never change.
 #
 # The app draws this as the grey seafloor silhouette under each section.
 
 suppressMessages({
-  library(dplyr); library(readr); library(terra); library(glue)
-  library(purrr); library(tidyr); library(geosphere)
+  library(dplyr); library(readr); library(glue)
+  library(purrr); library(tidyr); library(geosphere); library(calcofi4r)
 })
 
-# sample spacing along a line, km. 2 km resolves the Channel Islands banks
-# without making the files big: ~700 km per line x 11 lines is ~3,900 rows.
-STEP_KM <- 2
+# sample spacing along a line, m — see WHY 500 m above
+STEP_M <- 500
 
-gebco_tif <- "../apps/ctd-viz/data/gebco_calcofi.tif"
-grid_pq   <- "public/data/_grid.parquet"
+grid_pq <- "public/data/_grid.parquet"
 
 stopifnot(
   "run scripts/build_sections.sql first — _grid.parquet is missing" =
-    file.exists(grid_pq),
-  "GEBCO raster not found; expected the sibling ctd-viz app checkout" =
-    file.exists(gebco_tif))
+    file.exists(grid_pq))
 
 d_grid <- arrow::read_parquet(grid_pq)
-bathy  <- rast(gebco_tif)
 
-# the raster is positive-DOWN depth in metres with land already clamped to 0
-# (see apps/ctd-viz/prep_db.R), so no sign flip here. bilinear rather than nearest
-# so a station near a steep slope is not pinned to one 15-arc-second cell.
-sample_bathy <- function(lon, lat)
-  terra::extract(bathy, cbind(lon, lat), method = "bilinear")[, 1] |>
-    pmax(0) |>
-    round(1)
+# positive-down depth in metres, land clamped to 0 — cached after the first fetch
+bathy <- cc_bathy()
 
 # `line_dist_km` is distance along the line from its most-inshore grid station.
 # It is the common ruler that lets the app place the dense profile on a section
@@ -71,37 +72,26 @@ d_out <- d_grid |>
       cbind(head(lon, -1), head(lat, -1)),
       cbind(tail(lon, -1), tail(lat, -1))) / 1000)) |> round(3)) |>
   ungroup() |>
-  mutate(bathy_m = sample_bathy(lon, lat)) |>
+  mutate(bathy_m = round(cc_bathy_depth(lon, lat, bathy), 1)) |>
   select(grid_key, line, sta, lon, lat, shore, bathy_m, line_dist_km)
 
 # --- dense along-line profile -------------------------------------------------
-# walk each adjacent station pair and sample the great-circle path between them
-densify_line <- function(d) {
-  d <- arrange(d, sta)
-  if (nrow(d) < 2) return(NULL)
-  seg <- map_dfr(seq_len(nrow(d) - 1), function(i) {
-    a <- d[i, ]; b <- d[i + 1, ]
-    len_km <- (b$line_dist_km - a$line_dist_km)
-    n <- max(2L, ceiling(len_km / STEP_KM) + 1L)
-    f <- seq(0, 1, length.out = n)
-    # gcIntermediate would allocate a list per segment; a linear blend in lon/lat
-    # is within metres of the great circle over a 40 km leg at this latitude
-    tibble(
-      line_dist_km = a$line_dist_km + f * len_km,
-      lon = a$lon + f * (b$lon - a$lon),
-      lat = a$lat + f * (b$lat - a$lat))
-  })
-  seg |>
-    distinct(line_dist_km, .keep_all = TRUE) |>
-    arrange(line_dist_km)
-}
-
+# handing the stations' own `line_dist_km` in as the ruler keeps the profile
+# anchored exactly at every station, which is what the app's per-cruise warp
+# (build_sections.py: floor_profile) then stretches between
 d_line <- d_out |>
   group_by(line) |>
-  group_modify(~ densify_line(.x)) |>
+  group_modify(~ {
+    if (nrow(.x) < 2) return(tibble(line_dist_km = numeric(0),
+                                    bathy_m      = numeric(0)))
+    .x <- arrange(.x, sta)
+    cc_transect_bathy(
+      .x$lon, .x$lat, dist_km = .x$line_dist_km,
+      interval_m = STEP_M, bathy = bathy) |>
+      transmute(line_dist_km = round(dist_km, 2),
+                bathy_m      = round(depth_m, 1))
+  }) |>
   ungroup() |>
-  mutate(bathy_m = sample_bathy(lon, lat),
-         line_dist_km = round(line_dist_km, 2)) |>
   filter(!is.na(bathy_m)) |>
   select(line, line_dist_km, bathy_m)
 
@@ -117,6 +107,25 @@ missing_plotted <- d_out |>
 stopifnot(
   "a station that appears in a section has no seafloor depth" =
     nrow(missing_plotted) == 0)
+
+# the sampling is only as good as its spacing, and a silent regression to a
+# coarser profile is exactly the bug this file was rewritten to fix
+plotted_lines <- d_out |>
+  filter(grid_key %in% unique(d_sec$grid_key)) |>
+  distinct(line) |>
+  pull(line)
+gaps <- d_line |>
+  filter(line %in% plotted_lines) |>
+  group_by(line) |>
+  summarize(max_gap_km = max(diff(line_dist_km)), .groups = "drop")
+
+stopifnot(
+  "a plotted line has no dense profile" =
+    all(plotted_lines %in% gaps$line),
+  # the warp onto a cruise's occupied stations stretches spacing, so allow
+  # headroom over STEP_M rather than asserting it exactly
+  "the along-line profile is coarser than the requested interval" =
+    max(gaps$max_gap_km) <= STEP_M / 1000 * 1.5)
 
 cat(glue(
   "{sum(is.na(d_out$bathy_m))} of {nrow(d_out)} grid stations lie outside the ",
@@ -134,4 +143,5 @@ cat(glue(
   "\n")
 cat(glue(
   "metadata/line_bathymetry.csv   : {nrow(d_line)} samples across ",
-  "{n_distinct(d_line$line)} lines at {STEP_KM} km spacing"), "\n")
+  "{n_distinct(d_line$line)} lines at {STEP_M} m spacing; ",
+  "largest gap {round(max(gaps$max_gap_km), 2)} km"), "\n")

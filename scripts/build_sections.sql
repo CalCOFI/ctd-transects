@@ -115,6 +115,9 @@ FROM read_parquet(r('obs.parquet')) o
 JOIN ctd_cast c USING (sample_key)
 WHERE o.dataset_key = 'calcofi_ctd-cast'
   AND o.measurement_value IS NOT NULL
+  -- quality flags: CTD 8 = questionable, 9 = bad/missing (1/2 are sensor-selection
+  -- hints, not grades). NULL-safe. Same predicate as calcofi4r::cc_qual_ok_sql().
+  AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
   AND o.depth_min_m IS NOT NULL
   AND o.depth_min_m <= 515
   AND o.measurement_type IN (
@@ -171,6 +174,7 @@ FROM read_parquet(r('obs.parquet')) o
 JOIN ctd_cast c USING (sample_key)
 WHERE o.dataset_key = 'calcofi_ctd-cast'
   AND o.measurement_value IS NOT NULL
+  AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
   AND o.depth_min_m IS NOT NULL
   AND o.depth_min_m <= 515
   AND c.datetime IS NOT NULL

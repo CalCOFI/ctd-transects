@@ -41,7 +41,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          curl -fsSL https://install.duckdb.org | sh
+          # the installer is "#!/bin/bash -e" and uses [[ — piped to sh it dies
+          # ("[[: not found") and then 404s; both refresh runs on 2026-08-25 failed here
+          curl -fsSL https://install.duckdb.org | bash
           echo "$HOME/.duckdb/cli/latest" >> "$GITHUB_PATH"
           pip install -r requirements.txt
 

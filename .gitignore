@@ -13,3 +13,7 @@ public/data/_*.parquet
 # Pages can serve them — but the FIRST commit ships no data, because the shards
 # built before this repo existed carry the retired `preliminary` data_stage that
 # build_sections.py now refuses. Let CI populate them from a post-split release.
+
+# rendered build SQL + the catalog it was rendered against, written by
+# scripts/resolve_release.py on every build (scripts/build_sections.sql is the template)
+build/

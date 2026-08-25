@@ -1,6 +1,7 @@
 -- build_sections.sql — CalCOFI CTD cross-shelf transects -> public/data/_sections.parquet
 --
---   duckdb -c ".read scripts/build_sections.sql"     (needs duckdb CLI + network)
+--   python3 scripts/resolve_release.py               # renders this template -> build/build_sections.sql
+--   duckdb -c ".read build/build_sections.sql"       (needs duckdb CLI + network)
 --
 -- Emits ONE flat intermediate; scripts/build_sections.py reshapes it into the
 -- per-(line, cruise) JSON shards the app fetches. The split is deliberate: SQL is
@@ -44,20 +45,16 @@ SET VARIABLE clim_yr_max = 2013;
 -- anomaly is NULL rather than a difference against one lucky cast
 SET VARIABLE clim_min_n  = 3;
 
--- Resolve the current release from the same latest.txt every other consumer reads
--- (build_workflows_index.R, db-viz-station's build_depth_profiles.sql). Never
--- hardcode a release tag. Resolved into a session variable rather than referenced
--- as a subquery inside the macro, because DuckDB table functions like
--- read_parquet() cannot accept a macro whose argument contains a subquery
--- ("Table function cannot contain subqueries").
-CREATE TEMP TABLE _release AS
-  SELECT regexp_replace(content, '\s+$', '') AS version
-  FROM read_text('https://storage.googleapis.com/calcofi-db/ducklake/releases/latest.txt');
-SET VARIABLE release_version = (SELECT version FROM _release);
-
-CREATE TEMP MACRO r(p) AS
-  'https://storage.googleapis.com/calcofi-db/ducklake/releases/'
-  || getvariable('release_version') || '/parquet/' || p;
+-- ── where the release's parquet lives ────────────────────────────────────────
+-- This file is a TEMPLATE. scripts/resolve_release.py resolves the release (the
+-- same latest.txt every other consumer reads, or the version refresh.yml hands
+-- it — never a hardcoded tag), fetches its catalog.json, and renders every
+-- `__TBL:<table>__` token below into the read_parquet() over that table's parquet
+-- objects: content-addressed under ducklake/tables/ since the v2026.09 releases
+-- (one immutable object per table or partition, listed in the catalog), the
+-- legacy releases/<version>/parquet/ path before that. `__RELEASE__` becomes the
+-- version string. Never write either path by hand here: the per-release path is
+-- only guaranteed to answer for the promoted and consolidated versions.
 
 -- ── the CalCOFI grid: line/station geometry ──────────────────────────────────
 -- 218 rows. `geom_ctr` is the station centre; the app draws these on the map and
@@ -69,7 +66,7 @@ SELECT grid_key,
        shore,
        ST_X(geom_ctr) AS lon,
        ST_Y(geom_ctr) AS lat
-FROM read_parquet(r('grid.parquet'))
+FROM __TBL:grid__
 WHERE line IS NOT NULL AND station IS NOT NULL;
 
 -- ── one cast per (cruise, station) ───────────────────────────────────────────
@@ -81,7 +78,7 @@ CREATE TEMP TABLE ctd_cast AS
 SELECT s.sample_key, s.cruise_key, s.grid_key,
        g.line, g.sta, g.lon AS grid_lon, g.lat AS grid_lat,
        s.latitude, s.longitude, s.datetime, s.data_stage
-FROM read_parquet(r('sample.parquet')) s
+FROM __TBL:sample__ s
 JOIN station g USING (grid_key)
 WHERE s.dataset_key = 'calcofi_ctd-cast'
   AND s.sample_type = 'cast'
@@ -111,7 +108,7 @@ SELECT c.line,
        o.measurement_type AS var,
        CAST(ROUND(o.depth_min_m / 5) * 5 AS INTEGER) AS depth_m,
        ROUND(AVG(o.measurement_value), 4) AS value
-FROM read_parquet(r('obs.parquet')) o
+FROM __TBL:obs__ o
 JOIN ctd_cast c USING (sample_key)
 WHERE o.dataset_key = 'calcofi_ctd-cast'
   AND o.measurement_value IS NOT NULL
@@ -170,7 +167,7 @@ SELECT c.grid_key,
        ROUND(AVG(o.measurement_value), 4)   AS clim_mean,
        ROUND(STDDEV_SAMP(o.measurement_value), 4) AS clim_sd,
        COUNT(*)                             AS clim_n
-FROM read_parquet(r('obs.parquet')) o
+FROM __TBL:obs__ o
 JOIN ctd_cast c USING (sample_key)
 WHERE o.dataset_key = 'calcofi_ctd-cast'
   AND o.measurement_value IS NOT NULL
@@ -217,13 +214,13 @@ CREATE TEMP TABLE cruise AS
 SELECT cr.cruise_key,
        cr.ship_key,
        sh.ship_name
-FROM read_parquet(r('cruise.parquet')) cr
-LEFT JOIN read_parquet(r('ship.parquet')) sh USING (ship_key);
+FROM __TBL:cruise__ cr
+LEFT JOIN __TBL:ship__ sh USING (ship_key);
 
 -- ── measurement labels ───────────────────────────────────────────────────────
 CREATE TEMP TABLE variable AS
 SELECT measurement_type AS var, description, units, valid_min, valid_max
-FROM read_parquet(r('measurement_type.parquet'))
+FROM __TBL:measurement_type__
 WHERE measurement_type IN (SELECT DISTINCT var FROM section);
 
 -- ── export flat intermediates for the reshaper ───────────────────────────────
@@ -244,7 +241,7 @@ COPY (SELECT getvariable('clim_yr_min') AS yr_min,
                                        AND getvariable('clim_yr_max')) AS n_cruises)
      TO 'public/data/_baseline.parquet' (FORMAT PARQUET);
 
-SELECT getvariable('release_version')                        AS release,
+SELECT '__RELEASE__'                                         AS release,
        (SELECT count(*) FROM section)                        AS n_values,
        (SELECT count(DISTINCT (line, cruise_key)) FROM section) AS n_sections,
        (SELECT count(DISTINCT var) FROM section)             AS n_variables,

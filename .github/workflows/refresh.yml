@@ -47,6 +47,13 @@ jobs:
           echo "$HOME/.duckdb/cli/latest" >> "$GITHUB_PATH"
           pip install -r requirements.txt
 
+      # resolve_release.py is how the build finds the release parquet; its
+      # self-test pins exact URLs for both catalog shapes (content-addressed
+      # objects[] and the legacy per-release path), so a change that would send
+      # the build at the wrong bytes fails before anything is rendered.
+      - name: Self-test the release resolver
+        run: python3 scripts/test_resolve_release.py
+
       - name: Rebuild transect data from the integrated DB
         run: |
           # git does not track empty directories, and public/data/ ships empty on
@@ -58,17 +65,25 @@ jobs:
           # build_sections.py creates it, but that runs too late to help.
           mkdir -p public/data/sections
 
-          # build_sections.sql resolves the release itself from latest.txt, the
-          # same file every other consumer reads — never hardcode a release tag.
-          duckdb -c ".read scripts/build_sections.sql"
+          # The release comes from latest.txt, the same file every other
+          # consumer reads — never hardcode a release tag.
+          REL=$(curl -s https://storage.googleapis.com/calcofi-db/ducklake/releases/latest.txt | tr -d '[:space:]')
+          echo "resolved release: $REL"
+
+          # build_sections.sql never names a parquet path: it is a template whose
+          # __TBL:<table>__ tokens resolve_release.py renders (into build/) from
+          # the release's catalog.json — one immutable, content-addressed object
+          # per table or partition since the v2026.09 releases, the legacy
+          # releases/<v>/parquet/ path before that, which is now only guaranteed
+          # for promoted and consolidated versions.
+          python3 scripts/resolve_release.py --version "$REL"
+          duckdb -c ".read build/build_sections.sql"
 
           # Stamp the release BEFORE the reshaper runs: it copies this into
           # index.json, and app.js appends ?v=<release> to every data fetch.
           # GitHub Pages serves public/data/ with max-age=600 and no way to set
           # headers, so without it a returning visitor can pair a fresh app.js
           # with sections from a previous release.
-          REL=$(curl -s https://storage.googleapis.com/calcofi-db/ducklake/releases/latest.txt | tr -d '[:space:]')
-          echo "resolved release: $REL"
           printf '{"release":"%s","built":"%s"}\n' \
             "$REL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > public/data/version.json
 

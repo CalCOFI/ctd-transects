@@ -48,12 +48,21 @@ the renderer resample the matrix gets the same look without reimplementing it.
 
 The release version is resolved at build time from
 [`latest.txt`](https://storage.googleapis.com/calcofi-db/ducklake/releases/latest.txt),
-never hardcoded.
+never hardcoded, and its parquet is read **through the release's `catalog.json`**:
+`scripts/build_sections.sql` is a template whose `__TBL:<table>__` tokens
+`scripts/resolve_release.py` (stdlib only) renders into `read_parquet()` over each
+table's objects — content-addressed under `ducklake/tables/` since the v2026.09
+releases (one immutable file per table or partition, listed in the catalog), the
+legacy `releases/<version>/parquet/` path before that, which is now only guaranteed
+for the promoted and consolidated versions. Same rule as
+`calcofi4py.release.release_sources()` / `calcofi4r::cc_release_sources()`;
+`scripts/test_resolve_release.py` pins the exact URLs for both catalog shapes.
 
 ## Build
 
 ```bash
-duckdb -c ".read scripts/build_sections.sql"   # query the release  (~30 s)
+python3 scripts/resolve_release.py             # latest.txt + catalog -> build/build_sections.sql  (--version vYYYY.MM.DD to pin)
+duckdb -c ".read build/build_sections.sql"     # query the release  (~30 s)
 pip install -r requirements.txt
 python scripts/build_sections.py               # reshape into shards (~6 s)
 

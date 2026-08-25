@@ -149,7 +149,8 @@ function readURL() {
 function writeURL(sel) {
   const p = new URLSearchParams(
     { line: sel.line, cruise: sel.cruise, var: sel.var });
-  if (sel.mode === "anomaly") p.set("mode", "anomaly");
+  // the anomaly is the default view; a measured-value link says so explicitly
+  p.set("mode", sel.mode === "value" ? "value" : "anomaly");
   if (sel.ruler === "line") p.set("ruler", "line");
   history.replaceState(null, "", `${location.pathname}?${p}`);
 }
@@ -633,7 +634,9 @@ async function init() {
       line: url.line || state.index.default.line,
       cruise: url.cruise || state.index.default.cruise_key,
       var: url.var || state.index.default.var,
-      mode: url.mode || "value",
+      // default to the anomaly against climatology — the question the sections
+      // are drawn to answer; ?mode=value asks for the measured field
+      mode: url.mode || "anomaly",
       ruler: url.ruler,
     };
 

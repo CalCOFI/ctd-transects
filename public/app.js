@@ -618,7 +618,10 @@ async function init() {
       .then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (version && version.release) {
       CACHE_BUST = "?v=" + encodeURIComponent(version.release);
-      $("release").textContent = version.release;
+      const chip = $("release");
+      chip.querySelector("b").textContent = version.release;
+      chip.href = "https://calcofi.io/db-schema/#erd?v=" + encodeURIComponent(version.release);
+      chip.hidden = false;
       $("release-foot").textContent = version.release;
     }
 

@@ -55,7 +55,9 @@
   <a class="cc-title" href="./">CTD Transects
     <small class="tagline">Nearshore&nbsp;→&nbsp;offshore sections, automatically drawn for every line and cruise</small>
   </a>
-  <span class="release" id="release"></span>
+  <!-- the integrated-database release the sections were built from (data/version.json);
+       filled by init(), hidden until then. Links to that version's schema + release notes. -->
+  <a class="cc-release" id="release" href="https://calcofi.io/db-schema/" hidden>release <b></b></a>
   <span class="cc-spacer"></span>
   <button class="cc-theme-toggle" type="button" aria-label="Toggle dark / light theme">🌓</button>
 </header>

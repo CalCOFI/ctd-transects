@@ -46,12 +46,6 @@ a { color: var(--accent); }
 .cc-header .tagline { white-space: normal; }
 @media (max-width: 720px) { .cc-header .tagline { display: none; } }
 
-.release {
-  color: var(--muted);
-  font-size: .78rem;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ── controls ───────────────────────────────────────────────────────────── */
 
 .controls {

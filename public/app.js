@@ -81,8 +81,9 @@ const DIVERGING = new Set(["temperature_ave"]);
  * a uniformly-warm cruise blue. `zmid` does the pinning; the ramp is the same
  * one temperature uses so the two views read consistently. */
 
-const darkMode = () =>
-  window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+/* the theme is whatever brand/v1/theme.js put on <html> — dark unless it says
+ * light — never the OS setting, so the chrome and the plots cannot disagree */
+const darkMode = () => document.documentElement.dataset.theme !== "light";
 
 function scaleFor(varName, mode) {
   if (mode === "anomaly" || DIVERGING.has(varName))
@@ -93,10 +94,10 @@ function scaleFor(varName, mode) {
 /* Dark mode is selected, not flipped: the ramps keep their poles and only the
  * surfaces and ink change, so a field looks the same in both. */
 const theme = () => darkMode()
-  ? { ink: "#e6edf3", grid: "#22303c", panel: "#1b242e",
+  ? { ink: "#e6e9ed", grid: "#3a3f44", panel: "#2c3035",
       contour: "rgba(255,255,255,0.5)", floor: "rgba(150,158,166,0.85)",
-      floorLine: "#0f151b" }
-  : { ink: "#14202b", grid: "#dde3e9", panel: "#f2f4f6",
+      floorLine: "#1b1d20" }
+  : { ink: "#212529", grid: "#dee2e6", panel: "#f1f3f5",
       contour: "rgba(255,255,255,0.7)", floor: "rgba(120,128,136,0.9)",
       floorLine: "#333" };
 
@@ -657,6 +658,15 @@ async function init() {
         const c = currentSel();
         drawSection(state.shard, c.var, Number(e.target.value), c.mode, c.ruler);
       }
+    });
+
+    // the 🌓 toggle (brand/v1/theme.js) announces a change on the document;
+    // theme() and scaleFor() are read on every draw, so redrawing is enough
+    document.addEventListener("cc:theme", () => {
+      if (!state.shard) return;
+      const c = currentSel();
+      drawSection(state.shard, c.var, Number($("sel-depth").value), c.mode, c.ruler);
+      drawMap(state.shard);
     });
 
     await render(sel);

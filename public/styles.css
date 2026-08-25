@@ -1,23 +1,30 @@
+/* tokens follow the calcofi.io brand contract (brand/v1/theme.css, linked
+   before this file): dark is the default and light is opted into by
+   :root[data-theme="light"], which theme.js sets from ?theme= → cookie →
+   localStorage. the brand values are repeated here so the page keeps its
+   colours if that stylesheet fails to load; --shadow is the app's own. */
 :root {
-  --bg: #ffffff;
-  --fg: #14202b;
-  --muted: #5b6b7a;
-  --line: #dde3e9;
-  --panel: #ffffff;
-  --accent: #1d6a8c;
-  --shadow: 0 1px 2px rgba(20, 32, 43, .06), 0 4px 14px rgba(20, 32, 43, .05);
+  --bg: #1b1d20;
+  --panel: #24272b;
+  --panel-2: #2c3035;
+  --border: #3a3f44;
+  --fg: #e6e9ed;
+  --muted: #9aa0a6;
+  --accent: #4dabf7;
+  --accent-d: #339af0;
+  --shadow: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f151b;
-    --fg: #e6edf3;
-    --muted: #9aa9b7;
-    --line: #22303c;
-    --panel: #151d25;
-    --accent: #5cc2e6;
-    --shadow: none;
-  }
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f8f9fa;
+  --panel-2: #ffffff;
+  --border: #dee2e6;
+  --fg: #212529;
+  --muted: #6c757d;
+  --accent: #2780e3;
+  --accent-d: #1c69bf;
+  --shadow: 0 1px 2px rgba(20, 32, 43, .06), 0 4px 14px rgba(20, 32, 43, .05);
 }
 
 * { box-sizing: border-box; }
@@ -34,28 +41,10 @@ a { color: var(--accent); }
 
 /* ── header ─────────────────────────────────────────────────────────────── */
 
-.topbar {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 1rem 1.25rem .75rem;
-  border-bottom: 1px solid var(--line);
-}
-
-.topbar h1 {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 650;
-  letter-spacing: -.01em;
-}
-
-.tagline {
-  margin: .15rem 0 0;
-  color: var(--muted);
-  font-size: .85rem;
-}
+/* the bar itself is brand/v1's .cc-header; the tagline rides inside .cc-title
+   as a <small>, allowed to wrap (the title is nowrap) and dropped on phones */
+.cc-header .tagline { white-space: normal; }
+@media (max-width: 720px) { .cc-header .tagline { display: none; } }
 
 .release {
   color: var(--muted);
@@ -71,7 +60,7 @@ a { color: var(--accent); }
   gap: 1rem;
   flex-wrap: wrap;
   padding: .75rem 1.25rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
 }
 
 .ctl {
@@ -92,7 +81,7 @@ a { color: var(--accent); }
 .ctl input[type="range"] {
   font: inherit;
   padding: .35rem .5rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
   color: var(--fg);
@@ -113,13 +102,11 @@ a { color: var(--accent); }
   white-space: nowrap;
 }
 
-.badge-final  { background: #e6f6ec; color: #1a6b3c; border-color: #bfe6ce; }
-.badge-prelim { background: #fdf0e3; color: #8a4b12; border-color: #f2d5b3; }
+.badge-final  { background: #122c1e; color: #7fd6a2; border-color: #1d4a32; }
+.badge-prelim { background: #33230f; color: #eab77a; border-color: #5a3d18; }
 
-@media (prefers-color-scheme: dark) {
-  .badge-final  { background: #122c1e; color: #7fd6a2; border-color: #1d4a32; }
-  .badge-prelim { background: #33230f; color: #eab77a; border-color: #5a3d18; }
-}
+:root[data-theme="light"] .badge-final  { background: #e6f6ec; color: #1a6b3c; border-color: #bfe6ce; }
+:root[data-theme="light"] .badge-prelim { background: #fdf0e3; color: #8a4b12; border-color: #f2d5b3; }
 
 /* ── layout ─────────────────────────────────────────────────────────────── */
 
@@ -137,7 +124,7 @@ main {
 
 .panel {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: var(--shadow);
   padding: .75rem;
@@ -180,10 +167,9 @@ main {
 
 .error { color: #b3261e; padding: 1rem; }
 
-footer {
-  padding: .5rem 1.25rem 2rem;
-  color: var(--muted);
-  font-size: .8rem;
+.cc-footer {
+  margin: 0 1.25rem;
+  padding: .75rem 0 2rem;
 }
 
 /* ── the comparable-axis checkbox ───────────────────────────────────────────
@@ -201,7 +187,7 @@ footer {
 .ctl-check:has(input:disabled) { opacity: .45; }
 .ctl-check abbr {
   cursor: help;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 50%;
   width: 1.05em; height: 1.05em;
   display: inline-flex; align-items: center; justify-content: center;
@@ -229,10 +215,8 @@ footer {
 }
 .key-occ  { background: #e34948; }
 .key-line { background: transparent; border: 1.5px solid #e34948; }
-.key-grid { background: rgba(110,122,134,.55); width: 7px; height: 7px; }
-@media (prefers-color-scheme: dark) {
-  .key-grid { background: rgba(150,160,172,.5); }
-}
+.key-grid { background: rgba(150,160,172,.5); width: 7px; height: 7px; }
+:root[data-theme="light"] .key-grid { background: rgba(110,122,134,.55); }
 
 /* ── methods ────────────────────────────────────────────────────────────────
    An accordion, closed by default: the reader who just wants the section is not
@@ -273,7 +257,7 @@ footer {
 #methods code {
   font-size: .95em;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0 .25em;
 }

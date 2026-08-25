@@ -32,18 +32,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CalCOFI CTD Transects</title>
 <meta name="description" content="Cross-shelf temperature, salinity and oxygen sections along every CalCOFI line, for every cruise since 1993.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🌊</text></svg>">
+<!-- calcofi.io brand (v1) — paste verbatim into <head>, BEFORE any stylesheet.
+     The inline script must be inline: it sets the theme before first paint so
+     there is no flash of the wrong colour. theme.js then takes over. -->
+<link rel="icon" type="image/x-icon" href="https://calcofi.io/brand/v1/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="https://calcofi.io/brand/v1/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://calcofi.io/brand/v1/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="https://calcofi.io/brand/v1/apple-touch-icon.png">
+<script>(function(){var m=/[?&]theme=(dark|light)\b/.exec(location.search),c=/(?:^|;\s*)cc_theme=(dark|light)/.exec(document.cookie),s=null;try{s=localStorage.getItem("theme")}catch(e){}var t=(m&&m[1])||(c&&c[1])||(s==="light"||s==="dark"?s:null)||"dark",d=document.documentElement;d.dataset.theme=t;d.setAttribute("data-bs-theme",t);d.setAttribute("data-md-color-scheme",t==="dark"?"slate":"default");d.style.colorScheme=t})();</script>
+<link rel="stylesheet" href="https://calcofi.io/brand/v1/theme.css">
+<script defer src="https://calcofi.io/brand/v1/theme.js"></script>
 <link rel="stylesheet" href="styles.css">
 <script src="vendor/plotly.min.js" charset="utf-8"></script>
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand">
-    <h1>CalCOFI CTD Transects</h1>
-    <p class="tagline">Nearshore&nbsp;→&nbsp;offshore sections, automatically drawn for every line and cruise</p>
-  </div>
-  <div class="release" id="release"></div>
+<header class="cc-header">
+  <a class="cc-home" href="https://calcofi.io" aria-label="CalCOFI.io home">
+    <img class="cc-logo-dark"  src="https://calcofi.io/brand/v1/logo_calcofi.svg"       alt="CalCOFI" width="32" height="32">
+    <img class="cc-logo-light" src="https://calcofi.io/brand/v1/logo_calcofi_light.svg" alt="CalCOFI" width="32" height="32">
+  </a>
+  <a class="cc-title" href="./">CTD Transects
+    <small class="tagline">Nearshore&nbsp;→&nbsp;offshore sections, automatically drawn for every line and cruise</small>
+  </a>
+  <span class="release" id="release"></span>
+  <span class="cc-spacer"></span>
+  <button class="cc-theme-toggle" type="button" aria-label="Toggle dark / light theme">🌓</button>
 </header>
 
 <nav class="controls" aria-label="Section selection">
@@ -208,13 +222,13 @@
       <code>cc_anomaly()</code>, for anyone who would rather work from the
       database directly. The seafloor comes from the same package —
       <code>cc_transect_bathy()</code>, which
-      <a href="https://calcofi.io/ctd/">ctd-viz</a> draws its silhouette with
+      <a href="https://app.calcofi.io/ctd/">ctd-viz</a> draws its silhouette with
       too, so the two cannot disagree about where the bottom is.
     </p>
   </details>
 </section>
 
-<footer>
+<footer class="cc-footer">
   <p>
     Built from the
     <a href="https://calcofi.io/schema/">CalCOFI integrated database</a>

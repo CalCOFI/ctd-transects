@@ -559,8 +559,8 @@ async function render(sel) {
     const b = state.index.baseline;
     anomNote.textContent =
       `Departure from the ${b.yr_min}–${b.yr_max} mean for this station, depth ` +
-      `and calendar month (${b.n_cruises} cruises, minimum ${b.min_n} ` +
-      `observations per cell). ${pctAnom}% of this section's measurements have ` +
+      `and calendar month — the release's own climatology table (${b.n_cruises} ` +
+      `cruises, at least ${b.min_cruises} cruises per cell). ${pctAnom}% of this section's measurements have ` +
       `such a baseline; the rest are drawn from neighbouring values and should ` +
       `not be read closely. See Methods below.`;
     anomNote.hidden = false;
@@ -644,11 +644,14 @@ async function init() {
     if (b) {
       $("baseline-text").innerHTML =
         `Anomalies on this page are differences from a <strong>${b.yr_min}–` +
-        `${b.yr_max}</strong> baseline, built from ${b.n_cruises} cruises and ` +
-        `${b.n_cells.toLocaleString()} station × depth × month cells, each ` +
-        `requiring at least ${b.min_n} observations. That window is long enough ` +
-        `to average over the 1997–99 El Niño and La Niña, and it ends before the ` +
-        `2014–16 marine heatwave, so the heatwave and everything after it read ` +
+        `${b.yr_max}</strong> baseline — the integrated database's own ` +
+        `<code>climatology</code> table, built once when the release is cut and ` +
+        `shared with the <a href="https://calcofi.io/explore/?lens=section">CalCOFI ` +
+        `Explorer</a>, so the two cannot disagree. It holds ${b.n_cruises} cruises ` +
+        `in ${b.n_cells.toLocaleString()} station × depth × month cells, each ` +
+        `requiring at least ${b.min_cruises} distinct cruises. That window is long ` +
+        `enough to average over the 1997–99 El Niño and La Niña, and it ends before ` +
+        `the 2014–16 marine heatwave, so the heatwave and everything after it read ` +
         `as departures rather than being folded into the normal. It is not a ` +
         `30-year WMO normal: the 1 m-binned CTD record does not reach back far ` +
         `enough for one.`;

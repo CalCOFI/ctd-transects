@@ -156,11 +156,17 @@
     <h3 id="methods-baseline">Anomalies and the baseline</h3>
     <p id="baseline-text"></p>
     <p>
-      The climatology is a <strong>plain mean per station, 5&nbsp;m depth bin and
+      The climatology is a <strong>plain mean per station, 10&nbsp;m depth bin and
       calendar month</strong> across the baseline years — the finest grouping
       CalCOFI's sampling design supports, since quarterly-ish cruises over decades
       give many <em>years</em> per calendar month at a station but only a handful
-      of days. The anomaly is the measured value minus that mean.
+      of days. The anomaly is the measured value minus the mean of the cast's own
+      calendar month. Bins are 10&nbsp;m floor bins labelled by their shallow edge
+      (0, 10, 20&nbsp;…), the database's <code>depth_bin</code> convention: the
+      released CTD series is thinned to a 10&nbsp;m grid plus the profile's
+      inflection points, so finer bins would be built only from where the profile
+      happens to bend. The table itself (<code>climatology</code>) ships in the
+      release, so it is the same one the CalCOFI Explorer subtracts.
     </p>
     <p>
       Rudnick et&nbsp;al. (2017) fit annual and semiannual harmonics for the

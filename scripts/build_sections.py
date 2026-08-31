@@ -43,8 +43,9 @@ DISTANCE — TWO RULERS, BOTH BAKED
 
 ANOMALY
     Each shard carries an `anom` matrix beside every `vars` matrix, differenced
-    against the monthly climatology built in build_sections.sql over the baseline
-    window stated there. Cells with no baseline are null, never 0.
+    against the release's own `climatology` table (calcofi4db::build_climatology():
+    station x calendar month x 10 m bin, 1993-2013, >= 3 cruises) — the same
+    baseline the CalCOFI Explorer subtracts. Cells with no baseline are null, never 0.
 """
 
 import json
@@ -58,8 +59,9 @@ import pandas as pd
 DATA = Path("public/data")
 SECTIONS = DATA / "sections"
 
-# depth grid: 0-500 m in 5 m bins, matching the binning in build_sections.sql
-DEPTHS = list(range(0, 505, 5))
+# depth grid: 0-500 m in 10 m FLOOR bins (labelled by the shallow edge), matching
+# build_sections.sql and the release's climatology / obs_env depth_bin
+DEPTHS = list(range(0, 510, 10))
 
 # Display order and grouping for the variable picker. The corrected forms are the
 # headline series; the uncorrected sensor series exist so that a preliminary_without_bottle
@@ -341,9 +343,9 @@ def main():
         # stated in the app's methods panel; an anomaly whose baseline is not on
         # screen is not interpretable
         "baseline": {
-            "yr_min":    int(bas["yr_min"]),
-            "yr_max":    int(bas["yr_max"]),
-            "min_n":     int(bas["min_n"]),
+            "yr_min":      int(bas["yr_min"]),
+            "yr_max":      int(bas["yr_max"]),
+            "min_cruises": int(bas["min_cruises"]),
             "n_cells":   int(bas["n_cells"]),
             "n_cruises": int(bas["n_cruises"]),
         },
@@ -383,7 +385,7 @@ def main():
     print(f"stations : {len(stations_json)} grid stations")
     print(f"baseline : {int(bas['yr_min'])}-{int(bas['yr_max'])}, "
           f"{int(bas['n_cells']):,} cells from {int(bas['n_cruises'])} cruises "
-          f"(min_n={int(bas['min_n'])})")
+          f"(min_cruises={int(bas['min_cruises'])})")
 
 
 if __name__ == "__main__":

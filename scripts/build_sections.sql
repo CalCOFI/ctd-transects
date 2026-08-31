@@ -24,26 +24,23 @@ INSTALL httpfs; LOAD httpfs;
 INSTALL spatial; LOAD spatial;
 
 -- ── the climatological baseline ──────────────────────────────────────────────
--- ONE knob, stated here and carried into index.json so the app can print it. An
--- anomaly whose baseline is not on screen is not interpretable, and a baseline
--- buried in a build script is not on screen.
+-- The baseline is the release's own `climatology` table (calcofi4db::
+-- build_climatology(), run once when the release is cut): a plain mean per
+-- dataset x station x calendar month x 10 m floor depth bin x measurement type
+-- over 1993-2013, kept where at least 3 distinct cruises contribute, the window
+-- stamped on every row (clim_yr_min / clim_yr_max). This app, the CalCOFI
+-- Explorer's Sections lens and calcofi4r::cc_climatology() all subtract that one
+-- table — until 2026-08-31 each computed its own and they had drifted (one pooled
+-- all months, one binned a thinned 10 m series at 5 m, none shared a floor), so
+-- the same July 2026 section read +1.4 degC here and ~0 in the explorer.
 --
--- 1993-2013 is the window Rasmus Swalethorp asked for (CCIEA), and it is
--- available for the first time in the 2026-08 release: the Wilkinson archive
--- backfills 1993-08 through 2002, where the published record used to jump
--- 1998 -> 2003. Before that ingest this range would have quietly meant
--- "1998 plus 2003-2013".
+-- Why 1993-2013: the window Rasmus Swalethorp asked for (CCIEA), available since
+-- the Wilkinson archive backfilled 1993-2002; 21 years with both phases of the
+-- 1997-99 ENSO inside it, ending before the 2014-16 marine heatwave so the
+-- heatwave and what follows read as departures. NOT a WMO 30-year normal.
 --
--- 21 years is long enough to average over ENSO (1997-98 El Nino and 1998-99
--- La Nina both fall inside it) and it ends before the 2014-16 marine heatwave,
--- so the heatwave and what follows read as departures rather than being folded
--- into the normal. It is NOT a WMO 30-year normal; CalCOFI's CTD record cannot
--- support one without reaching into ship-hydrocast data of a different vintage.
-SET VARIABLE clim_yr_min = 1993;
-SET VARIABLE clim_yr_max = 2013;
--- a cell needs this many observations to be a baseline at all; below it the
--- anomaly is NULL rather than a difference against one lucky cast
-SET VARIABLE clim_min_n  = 3;
+-- For a release that predates the table, resolve_release.py substitutes
+-- scripts/climatology_fallback.sql (the same definition, inline) and warns.
 
 -- ── where the release's parquet lives ────────────────────────────────────────
 -- This file is a TEMPLATE. scripts/resolve_release.py resolves the release (the
@@ -87,14 +84,17 @@ QUALIFY row_number() OVER (
   ORDER BY right(s.sample_key, 1) = 'd' DESC, s.datetime) = 1;
 
 -- ── the section values ───────────────────────────────────────────────────────
--- Depth binned to 5 m and capped at ~500 m. Both matter for size, and the cap is
--- also what makes the sections comparable: a handful of casts go to 5000 m, and
--- letting them set the y-axis would squash every standard 500 m cast into the top
--- tenth of the plot.
+-- Depth binned to 10 m FLOOR bins (floor(depth_min_m / 10) * 10, labelled by the
+-- shallow edge — the release's obs_env.depth_bin convention, and the grain of its
+-- `climatology` table) and capped at 500 m. The cap is what makes the sections
+-- comparable: a handful of casts go to 5000 m, and letting them set the y-axis
+-- would squash every standard 500 m cast into the top tenth of the plot.
 --
--- Binning is not just compression. CTD sensors sample continuously (47.283 m,
--- 47.916 m, ...) so grouping by exact depth deduplicates almost nothing, and the
--- native-resolution jaggedness is sensor precision rather than signal.
+-- Not 5 m, as this was until 2026-08-31: `obs` carries the THINNED CTD series (a
+-- 10 m grid + RDP inflection points + bottle depths), so at 5 m the off-grid bins
+-- held about a third of the casts, sampled exactly where the profile bends, and
+-- their means sat visibly off their neighbours' (station 60, July: bin 25 at
+-- 14.27 degC between 15.39 and 15.04). Every 10 m bin holds every cast.
 --
 -- VARIABLE LIST: the corrected forms first, then the uncorrected sensor series.
 -- A preliminary_without_bottle cruise (sensor only, before the bottle merge) has NO
@@ -106,7 +106,7 @@ SELECT c.line,
        c.cruise_key,
        c.sta,
        o.measurement_type AS var,
-       CAST(ROUND(o.depth_min_m / 5) * 5 AS INTEGER) AS depth_m,
+       (floor(o.depth_min_m / 10) * 10)::INTEGER AS depth_m,
        ROUND(AVG(o.measurement_value), 4) AS value
 FROM __TBL:obs__ o
 JOIN ctd_cast c USING (sample_key)
@@ -116,7 +116,7 @@ WHERE o.dataset_key = 'calcofi_ctd-cast'
   -- hints, not grades). NULL-safe. Same predicate as calcofi4r::cc_qual_ok_sql().
   AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
   AND o.depth_min_m IS NOT NULL
-  AND o.depth_min_m <= 515
+  AND o.depth_min_m < 510
   AND o.measurement_type IN (
     'temperature_ave',
     'salinity_ave_corr',
@@ -142,43 +142,17 @@ WHERE c.sta IN (SELECT DISTINCT sta FROM section
                 WHERE line = c.line AND cruise_key = c.cruise_key);
 
 -- ── climatology: the baseline every anomaly is a departure from ──────────────
--- A plain monthly mean per (station, 5 m depth bin, calendar month) over the
--- window set at the top of this file. This mirrors `calcofi4r::cc_climatology()`
--- — the two are separate implementations of ONE definition, because the app's CI
--- has no R and the notebook path has no DuckDB CLI. If you change the grouping or
--- the floor here, change it there:
---   https://github.com/CalCOFI/calcofi4r/blob/main/R/transect.R
---
--- Why (station, depth, month) and not something finer: that is the finest
--- grouping CalCOFI's design supports. Quarterly-ish cruises over three decades
--- give many YEARS per calendar month at a station, but only a handful of days.
---
--- Why a plain mean and not harmonics: Rudnick et al. (2017) fit annual and
--- semiannual harmonics for the CUGN glider climatology, which suits near-
--- continuous glider sampling. CalCOFI's is episodic and unevenly spaced, and a
--- monthly mean is both defensible and legible — a reader can say exactly what the
--- anomaly is a departure from. `clim_n` ships so a thin cell is visible, not
--- silently trusted.
+-- Read from the release, never recomputed here (see the header). `depth_bin` is
+-- the same 10 m floor bin as `section.depth_m`, so the join below is exact.
 CREATE TEMP TABLE climatology AS
-SELECT c.grid_key,
-       month(c.datetime) AS mon,
-       CAST(ROUND(o.depth_min_m / 5) * 5 AS INTEGER) AS depth_m,
-       o.measurement_type AS var,
-       ROUND(AVG(o.measurement_value), 4)   AS clim_mean,
-       ROUND(STDDEV_SAMP(o.measurement_value), 4) AS clim_sd,
-       COUNT(*)                             AS clim_n
-FROM __TBL:obs__ o
-JOIN ctd_cast c USING (sample_key)
-WHERE o.dataset_key = 'calcofi_ctd-cast'
-  AND o.measurement_value IS NOT NULL
-  AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
-  AND o.depth_min_m IS NOT NULL
-  AND o.depth_min_m <= 515
-  AND c.datetime IS NOT NULL
-  AND year(c.datetime) BETWEEN getvariable('clim_yr_min') AND getvariable('clim_yr_max')
-  AND o.measurement_type IN (SELECT DISTINCT var FROM section)
-GROUP BY ALL
-HAVING COUNT(*) >= getvariable('clim_min_n');
+SELECT grid_key,
+       month            AS mon,
+       depth_bin        AS depth_m,
+       measurement_type AS var,
+       clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max
+FROM __TBL:climatology__
+WHERE dataset_key = 'calcofi_ctd-cast'
+  AND measurement_type IN (SELECT DISTINCT var FROM section);
 
 -- ── the anomaly ──────────────────────────────────────────────────────────────
 -- value - clim_mean, matched on station, calendar month and depth bin.
@@ -199,7 +173,8 @@ SELECT s.line, s.cruise_key, s.sta, s.var, s.depth_m,
        CASE WHEN cl.clim_sd > 0
             THEN ROUND((s.value - cl.clim_mean) / cl.clim_sd, 4) END AS anomaly_sd,
        cl.clim_mean,
-       cl.clim_n
+       cl.clim_n,
+       cl.n_cruises
 FROM section s
 JOIN section_station ss
   ON ss.line = s.line AND ss.cruise_key = s.cruise_key AND ss.sta = s.sta
@@ -231,14 +206,17 @@ COPY cruise          TO 'public/data/_cruises.parquet'   (FORMAT PARQUET);
 COPY variable        TO 'public/data/_variables.parquet' (FORMAT PARQUET);
 COPY (SELECT * FROM station) TO 'public/data/_grid.parquet' (FORMAT PARQUET);
 
--- the baseline the reshaper stamps into index.json for the app to display
-COPY (SELECT getvariable('clim_yr_min') AS yr_min,
-             getvariable('clim_yr_max') AS yr_max,
-             getvariable('clim_min_n')  AS min_n,
-             (SELECT count(*) FROM climatology) AS n_cells,
+-- the baseline the reshaper stamps into index.json for the app to display — read
+-- off the table's own rows, so the app cannot print a window the data was not
+-- averaged over
+COPY (SELECT any_value(clim_yr_min)           AS yr_min,
+             any_value(clim_yr_max)           AS yr_max,
+             min(n_cruises)                   AS min_cruises,
+             count(*)                         AS n_cells,
              (SELECT count(DISTINCT cruise_key) FROM ctd_cast
-              WHERE year(datetime) BETWEEN getvariable('clim_yr_min')
-                                       AND getvariable('clim_yr_max')) AS n_cruises)
+              WHERE year(datetime) BETWEEN (SELECT any_value(clim_yr_min) FROM climatology)
+                                       AND (SELECT any_value(clim_yr_max) FROM climatology)) AS n_cruises
+      FROM climatology)
      TO 'public/data/_baseline.parquet' (FORMAT PARQUET);
 
 SELECT '__RELEASE__'                                         AS release,

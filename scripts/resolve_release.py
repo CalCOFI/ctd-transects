@@ -68,6 +68,16 @@ RELEASES_HTTPS = f"{BUCKET_HTTPS}/ducklake/releases"
 TOKEN_RE = re.compile(r"__TBL:([a-z0-9_]+?)(?::([a-z0-9_]+?)=([^\s'\"]+?))?__")
 LEFTOVER_RE = re.compile(r"__(?:TBL:\S*?|RELEASE)__")
 
+# A table the build needs that an older release does not carry yet. When the
+# catalog has no entry for it, the token is rendered as the file's SELECT, in
+# parentheses, against the tables the release does carry — the same definition
+# the release runs (calcofi4db::build_climatology()), and a loud note on stderr.
+# Only `climatology` (releases from v2026.09) has one; delete the entry and the
+# file once every release this app can be pointed at ships the table.
+FALLBACKS = {
+    "climatology": os.path.join(os.path.dirname(os.path.abspath(__file__)), "climatology_fallback.sql"),
+}
+
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -89,6 +99,10 @@ def resolve_version(version: str | None) -> str:
 
 def fetch_catalog(version: str) -> dict:
     return json.loads(fetch_text(f"{RELEASES_HTTPS}/{version}/catalog.json"))
+
+
+def has_table(catalog: dict, table: str) -> bool:
+    return any(t["name"] == table for t in catalog["tables"])
 
 
 def release_sources(catalog: dict, table: str, partition: tuple[str, str] | None = None) -> dict:
@@ -166,6 +180,15 @@ def render(sql: str, catalog: dict) -> str:
     """
     def sub(m: re.Match) -> str:
         table, key, value = m.groups()
+        if key is None and table in FALLBACKS and not has_table(catalog, table):
+            log(f"resolve_release: NOTE {table!r} is not in the {catalog['version']} catalog — "
+                f"computing it inline from {os.path.relpath(FALLBACKS[table])} (the same definition "
+                f"as calcofi4db::build_climatology(); releases from v2026.09 ship the table)")
+            with open(FALLBACKS[table]) as f:
+                inner = render(f.read(), catalog)
+            # comment lines would swallow the rest of the outer line once inlined
+            code = "\n".join(l.partition("--")[0].rstrip() for l in inner.split("\n"))
+            return "(" + code.strip().rstrip(";") + ")"
         return read_parquet_sql(release_sources(catalog, table, (key, value) if key else None))
     out = []
     for line in sql.split("\n"):

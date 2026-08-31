@@ -192,6 +192,37 @@ class Render(unittest.TestCase):
         with self.assertRaises(SystemExit):
             rr.render("SELECT * FROM __TBL:no_such_table__", CANONICAL)
 
+    # `climatology` ships from the v2026.09 releases; against an older catalog the
+    # token becomes the SAME definition computed inline (scripts/climatology_fallback.sql)
+    def test_missing_climatology_is_computed_inline(self):
+        sql = "CREATE TEMP TABLE c AS SELECT * FROM __TBL:climatology__ WHERE dataset_key = 'x'; -- note\n"
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            out = rr.render(sql, CANONICAL)
+        self.assertIn("not in the v2026.09.01 catalog", err.getvalue())
+        self.assertTrue(out.startswith("CREATE TEMP TABLE c AS SELECT * FROM (SELECT o.dataset_key,"))
+        self.assertIn(f"FROM read_parquet(['{OBS_2019}', '{OBS_2020}'], hive_partitioning = true) o", out)
+        self.assertIn("HAVING count(DISTINCT o.cruise_key) >= 3) WHERE dataset_key = 'x'; -- note", out)
+        self.assertNotIn("__TBL", out)
+        # the fallback's own comment lines are stripped, so nothing after the token is swallowed
+        self.assertNotIn("climatology_fallback.sql —", out)
+
+    def test_present_climatology_is_read_not_computed(self):
+        cat = json.loads(json.dumps(CANONICAL))
+        cat["tables"].append({
+            "name": "climatology", "rows": 10, "partitioned": True, "supplemental": False,
+            "objects": [{"path": "ducklake/tables/climatology/measurement_type=temperature_ave/abc/data_0.parquet",
+                         "bytes": 1, "sha256": "00", "content_hash": "abc", "since": "v2026.09.01",
+                         "partition_by": "measurement_type", "partition_value": "temperature_ave"}]})
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            out = rr.render("FROM __TBL:climatology__", cat)
+        self.assertEqual(out, "FROM read_parquet('https://storage.googleapis.com/calcofi-db/ducklake/tables/"
+                              "climatology/measurement_type=temperature_ave/abc/data_0.parquet', hive_partitioning = true)")
+        self.assertEqual(err.getvalue(), "")
+
+    def test_fallback_is_only_for_the_whole_table(self):
+        with self.assertRaises(SystemExit):
+            rr.render("FROM __TBL:climatology:measurement_type=temperature_ave__", CANONICAL)
+
 
 class Cli(unittest.TestCase):
     def run_cli(self, catalog, extra):

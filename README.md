@@ -29,7 +29,7 @@ good plots, but nothing on the page says *where* the section is. Hence the map.
 ```
 GCS release parquet ──build_sections.sql──> public/data/_*.parquet   (flat)
   (obs, sample, grid,                                │
-   cruise, ship,                     build_sections.py
+   cruise, ship, climatology,        build_sections.py
    measurement_type)                                 │
                                                      ▼
                          public/data/index.json      lines, cruises, variables
@@ -37,9 +37,16 @@ GCS release parquet ──build_sections.sql──> public/data/_*.parquet   (fl
                          public/data/sections/       one shard per (line, cruise)
 ```
 
-Each shard holds every variable as a **station × depth matrix** (5 m bins to
-500 m) — about 11 × 101 numbers per variable, ~32 KB per shard, 671 shards. The
-app fetches one at a time.
+Each shard holds every variable as a **station × depth matrix** (10 m floor
+bins to 500 m, the release's `depth_bin` convention) — about 11 × 51 numbers per
+variable per view, ~20 KB per shard, 671 shards. The app fetches one at a time.
+
+The anomaly view subtracts the release's own **`climatology`** table
+(`calcofi4db::build_climatology()`: station × calendar month × 10 m bin,
+1993–2013, at least 3 cruises per cell), which the CalCOFI Explorer's Sections
+lens subtracts too — one baseline, so the two products cannot disagree. For a
+release that predates the table, `scripts/resolve_release.py` inlines
+`scripts/climatology_fallback.sql` (the same definition) and says so.
 
 That matrix goes straight to a Plotly `heatmap` with `zsmooth: "best"`. There is
 **no interpolation code in the browser**: `ctd-viz` gets its smooth ODV-style field

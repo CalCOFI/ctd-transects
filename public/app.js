@@ -382,10 +382,16 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     });
   }
 
-  // station tick marks along the top
+  /* Station tick marks along the top, drawn on the SECOND x-axis so that axis's
+   * tick labels are the station numbers (an axis with no trace on it does not
+   * render). The two rulers are the same ruler: `+proj=calcofi` is equidistant
+   * along a line at 7.386 km = 3.988 nmi per station unit (constant to 0.04 %
+   * over line 90's 665 km), so station number is a LINEAR rescaling of distance
+   * and both can label one axis with nothing distorted. */
   traces.push({
     type: "scatter",
     mode: "markers",
+    xaxis: "x2",
     x, y: x.map(() => 0),
     marker: { symbol: "triangle-down", size: 9, color: t.ink },
     hovertemplate: shard.stations.map(
@@ -398,10 +404,13 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
   const layout = {
     // r leaves room for the colorbar; without it the bar renders outside the
     // panel and lands on top of the map
-    margin: { l: 58, r: 86, t: 44, b: 52 },
+    // t carries the plot title AND the station axis above the panel; pinning the
+    // title to the container top keeps the two off each other
+    margin: { l: 58, r: 86, t: 92, b: 52 },
     title: {
       text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${zlabel}`,
       font: { size: 15, color: t.ink },
+      yref: "container", y: 0.985, yanchor: "top",
     },
     font: { color: t.ink },
     xaxis: {
@@ -410,11 +419,27 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
         font: { size: 12 },
       },
       zeroline: false, gridcolor: t.grid,
+      /* OFFSHORE ON THE LEFT, the coast on the right — the section is laid out
+       * the way the map beside it is, so a feature read off one is found in the
+       * same place on the other. A CalCOFI line runs west-south-west from the
+       * coast, so distance offshore DESCENDS left to right. */
       // On the shared ruler the range is the LINE's full extent, not this
       // cruise's — an axis that resizes with the cruise is not a comparison.
       range: useLine
-        ? [0, lineExtent(shard.line) ?? Math.max(...x)]
-        : [Math.min(...x), Math.max(...x)],
+        ? [lineExtent(shard.line) ?? Math.max(...x), 0]
+        : [Math.max(...x), Math.min(...x)],
+    },
+    /* The station numbers, on top — the classic hydrographic-section convention,
+     * and the labels for the tick marks that were already there. Same ruler, so
+     * `matches` keeps it locked to the km axis through any zoom. */
+    xaxis2: {
+      title: { text: "Station", font: { size: 12 } },
+      overlaying: "x", side: "top", matches: "x",
+      showgrid: false, zeroline: false,
+      tickmode: "array",
+      tickvals: x,
+      ticktext: shard.stations.map((s) => String(s.sta)),
+      tickfont: { size: 11, color: t.ink },
     },
     yaxis: {
       title: { text: "Depth (m)", font: { size: 12 } },

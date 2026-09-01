@@ -2,7 +2,7 @@
 
 Cross-shelf temperature, salinity, oxygen, density and fluorescence sections along
 every CalCOFI line, for every cruise in the integrated database — drawn
-automatically, nearshore to offshore, with no station picking.
+automatically, offshore to nearshore like the map, with no station picking.
 
 A static site: prebuilt JSON in `public/`, vanilla JavaScript, GitHub Pages. There
 is no server and no database at request time.
@@ -16,9 +16,18 @@ someone who already knows what they are looking for, and it orders the section b
 `ord_occ` — the order the ship occupied stations — so the direction is whichever
 way the ship happened to steam.
 
-Here a transect is **a CalCOFI line, ordered by station number ascending =
-nearshore → offshore**. That is well defined for every cruise without any user
-input, which is what makes the whole set pre-renderable and linkable.
+Here a transect is **a CalCOFI line, ordered by station number**. That is well
+defined for every cruise without any user input, which is what makes the whole
+set pre-renderable and linkable.
+
+It is drawn **offshore on the left, the coast on the right**, matching the map
+beside it (a CalCOFI line runs west-south-west from the coast) and the CalCOFI
+Explorer's Sections lens. The x-axis carries **both rulers — distance below,
+station number above** — because they are the same ruler: `+proj=calcofi` is
+equidistant along a line at **7.386 km = 3.99 nmi per station unit**, constant to
+0.04 % over the 665 km of line 90, so station number is distance rescaled. That
+is why the station labels can sit on a distance axis without distorting either
+the field or the GEBCO seafloor drawn under it.
 
 The prompt was Dan Rudnick's
 [CUGN glider climatology](https://spraydata.ucsd.edu/products/cugn-climatology/) —

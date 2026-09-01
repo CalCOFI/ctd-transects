@@ -53,7 +53,7 @@
     <img class="cc-logo-light" src="https://calcofi.io/brand/v1/logo_calcofi_light.svg" alt="CalCOFI" width="32" height="32">
   </a>
   <a class="cc-title" href="./">CTD Transects
-    <small class="tagline">Nearshore&nbsp;→&nbsp;offshore sections, automatically drawn for every line and cruise</small>
+    <small class="tagline">Offshore&nbsp;→&nbsp;nearshore sections, automatically drawn for every line and cruise</small>
   </a>
   <!-- the integrated-database release the sections were built from (data/version.json);
        filled by init(), hidden until then. Links to that version's schema + release notes. -->
@@ -120,15 +120,29 @@
 
     <h3>What a transect is here</h3>
     <p>
-      A transect is <strong>one CalCOFI line, ordered by station number
-      ascending</strong> — nearshore to offshore. No start and end station to
-      pick, which is what lets every line × cruise be drawn automatically.
-      Deliberately <em>not</em> the order stations were occupied: that is the
-      ship's track, so its direction is whichever way the ship steamed, and it is
-      missing on roughly half the database's cast records.
+      A transect is <strong>one CalCOFI line, ordered by station
+      number</strong>. No start and end station to pick, which is what lets
+      every line × cruise be drawn automatically. Deliberately <em>not</em> the
+      order stations were occupied: that is the ship's track, so its direction is
+      whichever way the ship steamed, and it is missing on roughly half the
+      database's cast records.
     </p>
     <p>
-      Values are averaged into <strong>5&nbsp;m depth bins to 500&nbsp;m</strong>.
+      It is drawn <strong>offshore on the left, the coast on the right</strong>,
+      which is how the map beside it is laid out — a CalCOFI line runs
+      west-south-west from the coast, so a feature you find in one is in the same
+      place in the other.
+    </p>
+    <p>
+      Both rulers label the same axis: <strong>distance below, station number
+      above</strong>. They are interchangeable, not merely adjacent — the CalCOFI
+      grid projection (<code>+proj=calcofi</code>) is equidistant along a line at
+      <strong>7.386&nbsp;km (3.99&nbsp;nautical miles) per station unit</strong>,
+      constant to within 0.04&nbsp;% over the 665&nbsp;km of line 90, so station
+      number is distance on a different scale.
+    </p>
+    <p>
+      Values are averaged into <strong>10&nbsp;m depth bins to 500&nbsp;m</strong>.
       CTD sensors sample continuously, so binning is not merely compression —
       grouping by exact depth would deduplicate almost nothing, and the
       native-resolution jaggedness is sensor precision rather than signal.

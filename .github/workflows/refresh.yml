@@ -84,8 +84,15 @@ jobs:
           # GitHub Pages serves public/data/ with max-age=600 and no way to set
           # headers, so without it a returning visitor can pair a fresh app.js
           # with sections from a previous release.
-          printf '{"release":"%s","built":"%s"}\n' \
-            "$REL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > public/data/version.json
+          #
+          # `citation` (WS-A4) reads build/catalog.json — the SAME fetch
+          # resolve_release.py just made, not a second one — plus this
+          # release's metadata.json, and is deliberately `{}` on any release
+          # cut before the 2026-09-03 attribution contract; app.js hides the
+          # About/footer citation lines rather than showing a placeholder.
+          python3 scripts/fetch_citation.py --catalog build/catalog.json --version "$REL" > /tmp/citation.json
+          jq -n --arg rel "$REL" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --slurpfile cit /tmp/citation.json \
+            '{release: $rel, built: $built, citation: $cit[0]}' > public/data/version.json
 
           python scripts/build_sections.py
           du -sh public/data/sections

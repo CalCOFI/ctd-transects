@@ -638,6 +638,29 @@ function currentSel() {
   };
 }
 
+/* `citation` is an optional block on data/version.json (WS-A4, written by
+ * scripts/fetch_citation.py's addition to refresh.yml) carrying what the
+ * release's own catalog.json/metadata.json say — never authored here:
+ *   { release: "…citation string…", release_doi: "10.…" | null,
+ *     dataset: "…citation_main…" | null, license: "CC-BY-4.0" | null }
+ * A release cut before 2026-09-03 (or a refresh that hasn't picked up the
+ * script change yet) has no `citation` key, and every line here stays
+ * hidden — never a placeholder. */
+function renderCitation(citation) {
+  if (!citation) return;
+  if (citation.dataset) {
+    $("cite-ctd-text").textContent = citation.dataset + (citation.license ? ` (${citation.license})` : "");
+    $("cite-ctd").hidden = false;
+  }
+  if (citation.release) {
+    $("cite-release-text").textContent = citation.release;
+    $("cite-release").hidden = false;
+    const foot = $("cite-foot");
+    foot.textContent = "Cite: " + citation.release;
+    foot.hidden = false;
+  }
+}
+
 async function init() {
   try {
     const version = await fetch("data/version.json")
@@ -649,6 +672,7 @@ async function init() {
       chip.href = "https://calcofi.io/db-schema/#erd?v=" + encodeURIComponent(version.release);
       chip.hidden = false;
       $("release-foot").textContent = version.release;
+      renderCitation(version.citation);
     }
 
     state.index = await getJSON("data/index.json");

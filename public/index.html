@@ -35,13 +35,17 @@
 <!-- calcofi.io brand (v1) — paste verbatim into <head>, BEFORE any stylesheet.
      The inline script must be inline: it sets the theme before first paint so
      there is no flash of the wrong colour. theme.js then takes over. -->
-<link rel="icon" type="image/x-icon" href="https://calcofi.io/brand/v1/favicon.ico">
-<link rel="icon" type="image/png" sizes="32x32" href="https://calcofi.io/brand/v1/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="https://calcofi.io/brand/v1/favicon-16x16.png">
-<link rel="apple-touch-icon" sizes="180x180" href="https://calcofi.io/brand/v1/apple-touch-icon.png">
-<script>(function(){var m=/[?&]theme=(dark|light)\b/.exec(location.search),c=/(?:^|;\s*)cc_theme=(dark|light)/.exec(document.cookie),s=null;try{s=localStorage.getItem("theme")}catch(e){}var t=(m&&m[1])||(c&&c[1])||(s==="light"||s==="dark"?s:null)||"dark",d=document.documentElement;d.dataset.theme=t;d.setAttribute("data-bs-theme",t);d.setAttribute("data-md-color-scheme",t==="dark"?"slate":"default");d.style.colorScheme=t})();</script>
-<link rel="stylesheet" href="https://calcofi.io/brand/v1/theme.css">
-<script defer src="https://calcofi.io/brand/v1/theme.js"></script>
+<meta name="cc-scale" content="app">
+<link rel="icon" type="image/x-icon" href="https://calcofi.io/brand/v2/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="https://calcofi.io/brand/v2/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://calcofi.io/brand/v2/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="https://calcofi.io/brand/v2/apple-touch-icon.png">
+<link rel="preload" href="https://calcofi.io/brand/v2/fonts/SourceSans3-VF.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="https://calcofi.io/brand/v2/fonts/Teko-VF.woff2" as="font" type="font/woff2" crossorigin>
+<script>(function(){var d=document.documentElement,m=/[?&]theme=(dark|light)\b/.exec(location.search),k=/(?:^|;\s*)cc_theme_src=user\b/.test(document.cookie),c=k&&/(?:^|;\s*)cc_theme=(dark|light)\b/.exec(document.cookie),s=null;try{if(localStorage.getItem("cc_theme_src")==="user")s=localStorage.getItem("cc_theme")}catch(e){}var t=(m&&m[1])||(c&&c[1])||(s==="dark"||s==="light"?s:null)||"light";d.dataset.theme=t;d.setAttribute("data-bs-theme",t);d.setAttribute("data-md-color-scheme",t==="dark"?"slate":"default");d.style.colorScheme=t;var sc=document.querySelector('meta[name="cc-scale"]');if(sc&&sc.content)d.setAttribute("data-cc-scale",sc.content)})();</script>
+<link rel="stylesheet" href="https://calcofi.io/brand/v2/fonts.css">
+<link rel="stylesheet" href="https://calcofi.io/brand/v2/theme.css">
+<script defer src="https://calcofi.io/brand/v2/theme.js"></script>
 <link rel="stylesheet" href="styles.css">
 <script src="vendor/plotly.min.js" charset="utf-8"></script>
 </head>
@@ -49,8 +53,8 @@
 
 <header class="cc-header">
   <a class="cc-home" href="https://calcofi.io" aria-label="CalCOFI.io home">
-    <img class="cc-logo-dark"  src="https://calcofi.io/brand/v1/logo_calcofi.svg"       alt="CalCOFI" width="32" height="32">
-    <img class="cc-logo-light" src="https://calcofi.io/brand/v1/logo_calcofi_light.svg" alt="CalCOFI" width="32" height="32">
+    <img class="cc-logo-dark"  src="https://calcofi.io/brand/v2/logo_calcofi_h.svg"       alt="CalCOFI">
+    <img class="cc-logo-light" src="https://calcofi.io/brand/v2/logo_calcofi_h_light.svg" alt="CalCOFI">
   </a>
   <a class="cc-title" href="./">CTD Transects
     <small class="tagline">Offshore&nbsp;→&nbsp;nearshore sections, automatically drawn for every line and cruise</small>

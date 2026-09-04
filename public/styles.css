@@ -1,4 +1,4 @@
-/* tokens follow the calcofi.io brand contract (brand/v1/theme.css, linked
+/* tokens follow the calcofi.io brand contract (brand/v2/theme.css, linked
    before this file): dark is the default and light is opted into by
    :root[data-theme="light"], which theme.js sets from ?theme= → cookie →
    localStorage. the brand values are repeated here so the page keeps its
@@ -41,7 +41,7 @@ a { color: var(--accent); }
 
 /* ── header ─────────────────────────────────────────────────────────────── */
 
-/* the bar itself is brand/v1's .cc-header; the tagline rides inside .cc-title
+/* the bar itself is brand/v2's .cc-header; the tagline rides inside .cc-title
    as a <small>, allowed to wrap (the title is nowrap) and dropped on phones */
 .cc-header .tagline { white-space: normal; }
 @media (max-width: 720px) { .cc-header .tagline { display: none; } }

@@ -81,8 +81,8 @@ const DIVERGING = new Set(["temperature_ave"]);
  * a uniformly-warm cruise blue. `zmid` does the pinning; the ramp is the same
  * one temperature uses so the two views read consistently. */
 
-/* the theme is whatever brand/v1/theme.js put on <html> — dark unless it says
- * light — never the OS setting, so the chrome and the plots cannot disagree */
+/* the theme is whatever brand/v2/theme.js put on <html> — light unless it says
+ * dark (brand v2) — never the OS setting, so the chrome and the plots cannot disagree */
 const darkMode = () => document.documentElement.dataset.theme !== "light";
 
 function scaleFor(varName, mode) {
@@ -718,7 +718,7 @@ async function init() {
       }
     });
 
-    // the 🌓 toggle (brand/v1/theme.js) announces a change on the document;
+    // the 🌓 toggle (brand/v2/theme.js) announces a change on the document;
     // theme() and scaleFor() are read on every draw, so redrawing is enough
     document.addEventListener("cc:theme", () => {
       if (!state.shard) return;

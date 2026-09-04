@@ -1,7 +1,9 @@
 {
-  "release": "v2026.08.25",
-  "built": "2026-09-04T16:38:33Z",
+  "release": "v2026.09.04",
+  "built": "2026-09-04T18:27:37Z",
   "citation": {
+    "release": "CalCOFI (2026). CalCOFI Integrated Database, release v2026.09.04 [Data set]. Scripps Institution of Oceanography, NOAA Fisheries, and California Department of Fish and Wildlife. https://calcofi.io/db-schema/?v=v2026.09.04",
+    "release_doi": "10.5281/zenodo.22281994",
     "dataset": "CalCOFI. (2023). CalCOFI CTD Cast Files. CalCOFI.org."
   }
 }

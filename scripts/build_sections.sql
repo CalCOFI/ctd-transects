@@ -66,21 +66,36 @@ SELECT grid_key,
 FROM __TBL:grid__
 WHERE line IS NOT NULL AND station IS NOT NULL;
 
--- ── one cast per (cruise, station) ───────────────────────────────────────────
+-- ── one cast per (cruise, station) — the STATION, not the grid cell ──────────
+-- `sample.site_key` is the real line/station ("090.0 028.0"); `grid_key` is the
+-- ~2,350 km² cell it falls in. The inshore cells of the core lines each hold 2–4
+-- stations occupied every cruise since 2004 (st30-ln90 = 90.30, 90.28, 90.27.7
+-- and 88.5/30.1: 3.7 occupations per cruise), and until 2026-09-09 this partition
+-- was (cruise_key, grid_key): 1,595 of 9,637 occupations (16.6 %; 26 % on line 90
+-- since 2004) never drew, and which one drew was whichever the ship reached
+-- first. The station is parsed from site_key; the cell still supplies the line
+-- (a station logged as 93.4 sits 2 km off line 93.3 and belongs to it), the
+-- shore class and the nominal position. A station whose own line is more than
+-- 0.5 units from the cell's line (88.5/30.1 inside st30-ln90) is not on this
+-- line and is left out rather than drawn 17 km from where it was.
+--
 -- `obs` is already effectively single-direction (the ingest's ctd_thin picks one
--- physical direction per cast, downcast preferred): 7,163 downcast vs 12 upcast
--- samples for temperature_ave, with only 5 stations carrying both. The QUALIFY
--- makes that explicit rather than leaving a doubled column on those 5.
+-- physical direction per cast, downcast preferred); the QUALIFY keeps that
+-- explicit — one row per (cruise, line, station), the downcast first.
 CREATE TEMP TABLE ctd_cast AS
-SELECT s.sample_key, s.cruise_key, s.grid_key,
-       g.line, g.sta, g.lon AS grid_lon, g.lat AS grid_lat,
+SELECT s.sample_key, s.cruise_key, s.grid_key, s.site_key,
+       g.line,
+       TRY_CAST(split_part(s.site_key, ' ', 2) AS DOUBLE) AS sta,
+       g.lon AS grid_lon, g.lat AS grid_lat,
        s.latitude, s.longitude, s.datetime, s.data_stage
 FROM __TBL:sample__ s
 JOIN station g USING (grid_key)
 WHERE s.dataset_key = 'calcofi_ctd-cast'
   AND s.sample_type = 'cast'
+  AND s.site_key IS NOT NULL
+  AND abs(TRY_CAST(split_part(s.site_key, ' ', 1) AS DOUBLE) - g.line) <= 0.5
 QUALIFY row_number() OVER (
-  PARTITION BY s.cruise_key, s.grid_key
+  PARTITION BY s.cruise_key, g.line, TRY_CAST(split_part(s.site_key, ' ', 2) AS DOUBLE)
   ORDER BY right(s.sample_key, 1) = 'd' DESC, s.datetime) = 1;
 
 -- ── the section values ───────────────────────────────────────────────────────
@@ -129,7 +144,7 @@ GROUP BY ALL;
 
 -- ── cast-level metadata, one row per (line, cruise, station) ─────────────────
 CREATE TEMP TABLE section_station AS
-SELECT c.line, c.cruise_key, c.sta, c.grid_key, c.shore,
+SELECT c.line, c.cruise_key, c.sta, c.grid_key, c.site_key, c.shore,
        -- prefer the ACTUAL cast position; fall back to the nominal grid centre.
        -- A cast is occupied within a few km of the nominal station, and the real
        -- position is what the map should show.
@@ -145,7 +160,8 @@ WHERE c.sta IN (SELECT DISTINCT sta FROM section
 -- Read from the release, never recomputed here (see the header). `depth_bin` is
 -- the same 10 m floor bin as `section.depth_m`, so the join below is exact.
 CREATE TEMP TABLE climatology AS
-SELECT grid_key,
+SELECT site_key,
+       grid_key,
        month            AS mon,
        depth_bin        AS depth_m,
        measurement_type AS var,
@@ -155,7 +171,8 @@ WHERE dataset_key = 'calcofi_ctd-cast'
   AND measurement_type IN (SELECT DISTINCT var FROM section);
 
 -- ── the anomaly ──────────────────────────────────────────────────────────────
--- value - clim_mean, matched on station, calendar month and depth bin.
+-- value - clim_mean, matched on the STATION (site_key, since the release's
+-- climatology moved to that grain, calcofi4db 4.8.0), calendar month and depth bin.
 --
 -- An INNER join, so a cell with no baseline is ABSENT rather than zero. An
 -- unsampled baseline is not a zero anomaly, and collapsing the two is how a plot
@@ -179,7 +196,7 @@ FROM section s
 JOIN section_station ss
   ON ss.line = s.line AND ss.cruise_key = s.cruise_key AND ss.sta = s.sta
 JOIN climatology cl
-  ON cl.grid_key = ss.grid_key
+  ON cl.site_key = ss.site_key
  AND cl.mon      = month(ss.datetime)
  AND cl.depth_m  = s.depth_m
  AND cl.var      = s.var;

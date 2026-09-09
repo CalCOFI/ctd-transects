@@ -18,7 +18,12 @@ way the ship happened to steam.
 
 Here a transect is **a CalCOFI line, ordered by station number**. That is well
 defined for every cruise without any user input, which is what makes the whole
-set pre-renderable and linkable.
+set pre-renderable and linkable. The station is the real one (`sample.site_key`,
+`090.0 028.0`), not the grid cell it falls in: the inshore cells each hold two to
+four stations occupied every cruise (the "station 30" cell on line 90 holds 90.30,
+90.28, 90.27.7 and 88.5/30.1), and until 2026-09-09 the build kept one cast per
+cell — 16.6 % of CTD occupations, 26 % on line 90 since 2004, never drew. They are
+their own columns now; the x-axis is distance, so they sit where they were.
 
 It is drawn **offshore on the left, the coast on the right**, matching the map
 beside it (a CalCOFI line runs west-south-west from the coast) and the CalCOFI

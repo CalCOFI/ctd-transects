@@ -5,12 +5,15 @@
 -- says __TBL:climatology__ and the catalog has no such table — and says so on stderr.
 -- It is the SAME definition as calcofi4db::build_climatology(), which is what the release
 -- runs: a plain mean per dataset x station x calendar month x 10 m floor depth bin x
--- measurement type over 1993-2013, kept where at least 3 distinct cruises contribute.
+-- measurement type over 1993-2013, kept where at least 3 distinct cruises contribute —
+-- the station being sample.site_key (the real line/station), not the grid cell, since
+-- calcofi4db 4.8.0; grid_key rides along as the station's modal cell.
 -- Restricted to the CTD dataset here because that is the only one this app reads; the
 -- release table carries every env dataset. Delete this file once every release this app
 -- can be pointed at ships the table.
 SELECT o.dataset_key,
-       o.grid_key,
+       s.site_key,
+       mode(o.grid_key)                                     AS grid_key,
        month(o.datetime)::TINYINT                           AS month,
        (floor(o.depth_min_m / 10) * 10)::INTEGER            AS depth_bin,
        o.measurement_type,
@@ -21,12 +24,13 @@ SELECT o.dataset_key,
        1993::SMALLINT                                       AS clim_yr_min,
        2013::SMALLINT                                       AS clim_yr_max
 FROM __TBL:obs__ o
+JOIN __TBL:sample__ s USING (sample_key)
 WHERE o.realm = 'env'
   AND o.dataset_key = 'calcofi_ctd-cast'
-  AND o.grid_key IS NOT NULL AND o.datetime IS NOT NULL
+  AND s.site_key IS NOT NULL AND o.datetime IS NOT NULL
   AND o.depth_min_m IS NOT NULL AND o.depth_min_m >= 0 AND o.depth_min_m < 510
   AND o.measurement_value IS NOT NULL AND isfinite(o.measurement_value)
   AND year(o.datetime) BETWEEN 1993 AND 2013
   AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
-GROUP BY ALL
+GROUP BY o.dataset_key, s.site_key, month, depth_bin, o.measurement_type
 HAVING count(DISTINCT o.cruise_key) >= 3

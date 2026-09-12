@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Self-test for scripts/resolve_release.py — exact URLs against both catalog shapes.
 
-The two fixtures are copies of calcofi4r/tests/testthat/fixtures/catalog_canonical.json
+The two fixtures start from calcofi4r/tests/testthat/fixtures/catalog_canonical.json
 and catalog_legacy.json (the R and Python packages assert the same URLs against
 the same files), embedded here so this runs in CI with nothing checked out but
-this repo.
+this repo. CANONICAL also carries every table build_sections.sql names, so
+RealBuildScript can render the real build against it — add the table here when
+the build learns a new __TBL: token.
 
     python3 scripts/test_resolve_release.py
 """
@@ -17,7 +19,8 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPTS_DIR)
 import resolve_release as rr  # noqa: E402
 
 CANONICAL = {'version': 'v2026.09.01',
@@ -36,6 +39,54 @@ CANONICAL = {'version': 'v2026.09.01',
                           'content_hash': 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
                           'since': 'v2026.08.25',
                           'compat_path': 'ducklake/releases/v2026.09.01/parquet/cruise.parquet'}]},
+            {'name': 'sample',
+             'rows': 90000,
+             'partitioned': False,
+             'supplemental': False,
+             'content_hash': 'b1b2b3b4b5b6b7b8b9babbbcbdbebfb0',
+             'compat_path': 'ducklake/releases/v2026.09.01/parquet/sample.parquet',
+             'objects': [{'path': 'ducklake/tables/sample/b1b2b3b4b5b6b7b8b9babbbc/sample.parquet',
+                          'bytes': 20480,
+                          'sha256': '00ee',
+                          'content_hash': 'b1b2b3b4b5b6b7b8b9babbbcbdbebfb0',
+                          'since': 'v2026.09.01',
+                          'compat_path': 'ducklake/releases/v2026.09.01/parquet/sample.parquet'}]},
+            {'name': 'grid',
+             'rows': 2000,
+             'partitioned': False,
+             'supplemental': False,
+             'content_hash': 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1',
+             'compat_path': 'ducklake/releases/v2026.09.01/parquet/grid.parquet',
+             'objects': [{'path': 'ducklake/tables/grid/c1c1c1c1c1c1c1c1c1c1c1c1/grid.parquet',
+                          'bytes': 4096,
+                          'sha256': '00',
+                          'content_hash': 'c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1',
+                          'since': 'v2026.09.01',
+                          'compat_path': 'ducklake/releases/v2026.09.01/parquet/grid.parquet'}]},
+            {'name': 'ship',
+             'rows': 80,
+             'partitioned': False,
+             'supplemental': False,
+             'content_hash': 'c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2',
+             'compat_path': 'ducklake/releases/v2026.09.01/parquet/ship.parquet',
+             'objects': [{'path': 'ducklake/tables/ship/c2c2c2c2c2c2c2c2c2c2c2c2/ship.parquet',
+                          'bytes': 4096,
+                          'sha256': '00',
+                          'content_hash': 'c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2',
+                          'since': 'v2026.09.01',
+                          'compat_path': 'ducklake/releases/v2026.09.01/parquet/ship.parquet'}]},
+            {'name': 'measurement_type',
+             'rows': 120,
+             'partitioned': False,
+             'supplemental': False,
+             'content_hash': 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3',
+             'compat_path': 'ducklake/releases/v2026.09.01/parquet/measurement_type.parquet',
+             'objects': [{'path': 'ducklake/tables/measurement_type/c3c3c3c3c3c3c3c3c3c3c3c3/measurement_type.parquet',
+                          'bytes': 4096,
+                          'sha256': '00',
+                          'content_hash': 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3',
+                          'since': 'v2026.09.01',
+                          'compat_path': 'ducklake/releases/v2026.09.01/parquet/measurement_type.parquet'}]},
             {'name': 'obs',
              'rows': 3000000,
              'partitioned': True,
@@ -87,6 +138,7 @@ LEGACY = {'version': 'v2026.08.14',
 
 B = "https://storage.googleapis.com/calcofi-db"
 CRUISE_CANON = f"{B}/ducklake/tables/cruise/a1b2c3d4e5f60718293a4b5c/cruise.parquet"
+SAMPLE_CANON = f"{B}/ducklake/tables/sample/b1b2b3b4b5b6b7b8b9babbbc/sample.parquet"
 OBS_2019 = f"{B}/ducklake/tables/obs/year=2019/1111111111111111111111aa/data_0.parquet"
 OBS_2020 = f"{B}/ducklake/tables/obs/year=2020/2222222222222222222222bb/data_0.parquet"
 OBS_TWIN = f"{B}/ducklake/tables/obs/9999999999999999999999ff/obs.parquet"
@@ -201,6 +253,10 @@ class Render(unittest.TestCase):
         self.assertIn("not in the v2026.09.01 catalog", err.getvalue())
         self.assertTrue(out.startswith("CREATE TEMP TABLE c AS SELECT * FROM (SELECT o.dataset_key,"))
         self.assertIn(f"FROM read_parquet(['{OBS_2019}', '{OBS_2020}'], hive_partitioning = true) o", out)
+        # the fallback keys the station on sample.site_key (calcofi4db 4.8.0), so it joins
+        # `sample` too — every table the fallback names has to resolve, not just obs
+        self.assertIn(f"JOIN read_parquet('{SAMPLE_CANON}') s USING (sample_key)", out)
+        self.assertIn("s.site_key", out)
         self.assertIn("HAVING count(DISTINCT o.cruise_key) >= 3) WHERE dataset_key = 'x'; -- note", out)
         self.assertNotIn("__TBL", out)
         # the fallback's own comment lines are stripped, so nothing after the token is swallowed
@@ -222,6 +278,25 @@ class Render(unittest.TestCase):
     def test_fallback_is_only_for_the_whole_table(self):
         with self.assertRaises(SystemExit):
             rr.render("FROM __TBL:climatology:measurement_type=temperature_ave__", CANONICAL)
+
+
+class RealBuildScript(unittest.TestCase):
+    """The checked-in build SQL renders whole against the fixture catalog.
+
+    The tests above pin URLs for hand-written snippets; this one is what catches a
+    token nobody thought to add a fixture for. `JOIN __TBL:sample__` reached
+    climatology_fallback.sql with `sample` absent from CANONICAL, and every refresh
+    run from 2026-09-10 on died in CI at the resolver self-test.
+    """
+
+    def test_build_sections_renders_against_the_fixture(self):
+        with open(os.path.join(SCRIPTS_DIR, "build_sections.sql")) as f:
+            sql = f.read()
+        with contextlib.redirect_stderr(io.StringIO()):
+            out = rr.render(sql, CANONICAL)   # SystemExit if a token cannot resolve
+        for line in out.split("\n"):
+            self.assertNotIn("__TBL", line.partition("--")[0])
+            self.assertNotIn("__RELEASE__", line.partition("--")[0])
 
 
 class Cli(unittest.TestCase):

@@ -23,6 +23,48 @@
 INSTALL httpfs; LOAD httpfs;
 INSTALL spatial; LOAD spatial;
 
+-- ── sensor-pair combination (ctd-transects#1) ────────────────────────────────
+-- Mirrors calcofi4db::combine_sensor_pair_sql() exactly (R package — not
+-- callable from this plain-DuckDB file, so its generated CASE expression is
+-- transcribed here by hand). The rule, in precedence order:
+--   1. a sensor flagged 8 (questionable) or 9 (bad) is dropped;
+--   2. a 1 (use primary) on either sensor's flag selects sensor 1 alone, a 2
+--      (use secondary) selects sensor 2 alone, when both flags agree; if they
+--      disagree, neither is trusted over the other and the mean is used;
+--   3. otherwise the mean of the two; one alone when the other is NULL; NULL
+--      when neither survives.
+-- Flags are compared as the source writes them ("8", "8.0", 8 all mean the
+-- same thing), matching calcofi4r::cc_qual_ok_sql()'s normalisation.
+-- Before trusting this in a release build: run the six calcofi4db
+-- combine_sensor_pair() doc examples through both this macro and the R
+-- function and confirm they agree.
+CREATE MACRO combine_sensor_pair(v1, v2, q1, q2) AS (
+  CASE
+    WHEN COALESCE((regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') = '1'
+                OR regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') = '1'), FALSE)
+     AND NOT COALESCE((regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') = '2'
+                    OR regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') = '2'), FALSE)
+     AND (CASE WHEN regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v1 END) IS NOT NULL
+    THEN (CASE WHEN regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v1 END)
+
+    WHEN COALESCE((regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') = '2'
+                OR regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') = '2'), FALSE)
+     AND NOT COALESCE((regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') = '1'
+                    OR regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') = '1'), FALSE)
+     AND (CASE WHEN regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v2 END) IS NOT NULL
+    THEN (CASE WHEN regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v2 END)
+
+    WHEN (CASE WHEN regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v1 END) IS NOT NULL
+     AND (CASE WHEN regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v2 END) IS NOT NULL
+    THEN ((CASE WHEN regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v1 END)
+        + (CASE WHEN regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v2 END)) / 2
+
+    ELSE COALESCE(
+      (CASE WHEN regexp_replace(CAST(q1 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v1 END),
+      (CASE WHEN regexp_replace(CAST(q2 AS VARCHAR), '\.0+$', '') IN ('8', '9') THEN NULL ELSE v2 END))
+  END
+);
+
 -- ── the climatological baseline ──────────────────────────────────────────────
 -- The baseline is the release's own `climatology` table (calcofi4db::
 -- build_climatology(), run once when the release is cut): a plain mean per
@@ -116,30 +158,122 @@ QUALIFY row_number() OVER (
 -- *_corr / *_sta_corr values at all — the correction is fitted against bottle
 -- samples. Carrying the raw series is what keeps salinity and oxygen plottable on
 -- the most recent cruises, which are exactly the ones a user opens first.
+--
+-- SENSOR-PAIR VARIABLES (ctd-transects#1). Salinity and oxygen are true sensor
+-- pairs — two physical sensors to combine, so they get the pivot +
+-- combine_sensor_pair() treatment below. Chlorophyll and nitrate are NOT: per
+-- workflows/libs/build_ctd_measurement_registry.R, est_chlorophyll_a_*/
+-- est_nitrate_* are each a single fluorometer/ISUS-derived estimate with one
+-- quality flag (fluor_q / isusq) — no second sensor to reconcile — so they need
+-- no macro, just their own two measurement_type strings added to the
+-- straight-from-obs list below, same as temperature/sigma_theta/fluorescence.
+--
+-- No longer read from the release's precomputed *_ave_* fields (how they treat
+-- a flagged sensor is undocumented). Computed here instead, via
+-- combine_sensor_pair() above. `obs` gives one row per sensor (long format);
+-- the macro needs both sensors in one row (wide), so each pair is pivoted
+-- first. Deliberately NOT run through the blanket 8/9 filter below — the macro
+-- needs to see each sensor's own flag to decide, so filtering a flagged row
+-- out first would hide it from the rule that needs it.
+CREATE TEMP TABLE salinity_pair AS
+SELECT sample_key,
+       depth_min_m,
+       MAX(CASE WHEN measurement_type = 'salinity_1_corr' THEN measurement_value END) AS s1,
+       MAX(CASE WHEN measurement_type = 'salinity_1_corr' THEN measurement_qual  END) AS q1,
+       MAX(CASE WHEN measurement_type = 'salinity_2_corr' THEN measurement_value END) AS s2,
+       MAX(CASE WHEN measurement_type = 'salinity_2_corr' THEN measurement_qual  END) AS q2
+FROM __TBL:obs__
+WHERE dataset_key = 'calcofi_ctd-cast'
+  AND measurement_type IN ('salinity_1_corr', 'salinity_2_corr')
+  AND depth_min_m IS NOT NULL
+  AND depth_min_m < 510
+GROUP BY sample_key, depth_min_m;
+
+CREATE TEMP TABLE salinity_combined AS
+SELECT sample_key, depth_min_m,
+       'salinity_ave_corr' AS var,
+       combine_sensor_pair(s1, s2, q1, q2) AS value
+FROM salinity_pair;
+
+-- oxygen: TWO pairs (station-corrected and cruise-corrected are different fits,
+-- both wanted — Rasmus), so two pivots and two combines, kept as two variables.
+CREATE TEMP TABLE oxygen_sta_pair AS
+SELECT sample_key,
+       depth_min_m,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_1_sta_corr' THEN measurement_value END) AS s1,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_1_sta_corr' THEN measurement_qual  END) AS q1,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_2_sta_corr' THEN measurement_value END) AS s2,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_2_sta_corr' THEN measurement_qual  END) AS q2
+FROM __TBL:obs__
+WHERE dataset_key = 'calcofi_ctd-cast'
+  AND measurement_type IN ('oxygen_ml_l_1_sta_corr', 'oxygen_ml_l_2_sta_corr')
+  AND depth_min_m IS NOT NULL
+  AND depth_min_m < 510
+GROUP BY sample_key, depth_min_m;
+
+CREATE TEMP TABLE oxygen_cruise_pair AS
+SELECT sample_key,
+       depth_min_m,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_1_cruise_corr' THEN measurement_value END) AS s1,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_1_cruise_corr' THEN measurement_qual  END) AS q1,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_2_cruise_corr' THEN measurement_value END) AS s2,
+       MAX(CASE WHEN measurement_type = 'oxygen_ml_l_2_cruise_corr' THEN measurement_qual  END) AS q2
+FROM __TBL:obs__
+WHERE dataset_key = 'calcofi_ctd-cast'
+  AND measurement_type IN ('oxygen_ml_l_1_cruise_corr', 'oxygen_ml_l_2_cruise_corr')
+  AND depth_min_m IS NOT NULL
+  AND depth_min_m < 510
+GROUP BY sample_key, depth_min_m;
+
+CREATE TEMP TABLE oxygen_combined AS
+SELECT sample_key, depth_min_m,
+       'oxygen_ml_l_ave_sta_corr' AS var,          -- same name the release used to publish
+       combine_sensor_pair(s1, s2, q1, q2) AS value
+FROM oxygen_sta_pair
+UNION ALL
+SELECT sample_key, depth_min_m,
+       'oxygen_ml_l_ave_cruise_corr' AS var,       -- new: no equivalent existed before
+       combine_sensor_pair(s1, s2, q1, q2) AS value
+FROM oxygen_cruise_pair;
+
 CREATE TEMP TABLE section AS
 SELECT c.line,
        c.cruise_key,
        c.sta,
-       o.measurement_type AS var,
-       (floor(o.depth_min_m / 10) * 10)::INTEGER AS depth_m,
-       ROUND(AVG(o.measurement_value), 4) AS value
-FROM __TBL:obs__ o
+       x.var,
+       (floor(x.depth_min_m / 10) * 10)::INTEGER AS depth_m,
+       ROUND(AVG(x.value), 4) AS value
+FROM (
+  -- unchanged variables, straight from obs — now including chlorophyll and
+  -- nitrate (single-flag estimates, no sensor pair to combine — see above)
+  SELECT sample_key, depth_min_m, measurement_type AS var, measurement_value AS value
+  FROM __TBL:obs__
+  WHERE dataset_key = 'calcofi_ctd-cast'
+    AND measurement_value IS NOT NULL
+    -- quality flags: CTD 8 = questionable, 9 = bad/missing (1/2 are sensor-selection
+    -- hints, not grades). NULL-safe. Same predicate as calcofi4r::cc_qual_ok_sql().
+    AND COALESCE(regexp_replace(measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
+    AND depth_min_m IS NOT NULL
+    AND depth_min_m < 510
+    AND measurement_type IN (
+      'temperature_ave',
+      'sigma_theta_1',
+      'fluorescence_v',
+      'salinity_1',
+      'oxygen_ml_l_1',
+      'est_chlorophyll_a_sta_corr',
+      'est_chlorophyll_a_cruise_corr',
+      'est_nitrate_sta_corr',
+      'est_nitrate_cruise_corr')
+
+  UNION ALL
+
+  -- salinity and oxygen: sensor-pair combined above, flag handling already applied
+  SELECT sample_key, depth_min_m, var, value FROM salinity_combined WHERE value IS NOT NULL
+  UNION ALL
+  SELECT sample_key, depth_min_m, var, value FROM oxygen_combined   WHERE value IS NOT NULL
+) x
 JOIN ctd_cast c USING (sample_key)
-WHERE o.dataset_key = 'calcofi_ctd-cast'
-  AND o.measurement_value IS NOT NULL
-  -- quality flags: CTD 8 = questionable, 9 = bad/missing (1/2 are sensor-selection
-  -- hints, not grades). NULL-safe. Same predicate as calcofi4r::cc_qual_ok_sql().
-  AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
-  AND o.depth_min_m IS NOT NULL
-  AND o.depth_min_m < 510
-  AND o.measurement_type IN (
-    'temperature_ave',
-    'salinity_ave_corr',
-    'oxygen_ml_l_ave_sta_corr',
-    'sigma_theta_1',
-    'fluorescence_v',
-    'salinity_1',
-    'oxygen_ml_l_1')
 GROUP BY ALL;
 
 -- ── cast-level metadata, one row per (line, cruise, station) ─────────────────

@@ -114,11 +114,18 @@ const STAGE_LABELS = {
   preliminary_without_bottle: "Preliminary — CTD only, no bottle merge",
 };
 
+/* preliminary_without_bottle offers temperature ONLY (see availableVars below
+ * for why) — Rasmus Swalethorp, 2026-09-09 ("Next Two Weeks Tasks"): asked to
+ * hold off on showing the raw sensor series at all here, uncorrected salinity
+ * or oxygen can look like a real signal when the sensor has drifted or is
+ * overdue for calibration, "especially visible with the anomalies". */
 const STAGE_NOTE = {
   preliminary_without_bottle:
-    "This cruise has not been through the bottle merge yet, so the " +
-    "bottle-corrected salinity, oxygen and chlorophyll do not exist for it. " +
-    "The uncorrected sensor series are shown instead where available.",
+    "This cruise has not been through the bottle merge yet. Only temperature " +
+    "is shown — salinity, oxygen, chlorophyll and nitrate all depend on sensor " +
+    "calibration that the merge corrects for, and an uncorrected reading can " +
+    "look like a real signal, especially in the anomaly view. Revisit once the " +
+    "merge has run.",
   preliminary_with_bottle:
     "Preliminary: the bottle merge has run, but values may still change after " +
     "post-cruise calibration — especially oxygen, nitrate and chlorophyll.",
@@ -161,15 +168,24 @@ function lineByName(name) {
   return state.index.lines.find((l) => l.line === name);
 }
 
-/* Which variables can actually be drawn for this cruise, in display order.
- *
- * An uncorrected series is offered ONLY when the corrected one it stands in for
- * is absent — otherwise every picker would carry two near-identical salinities
- * and the user would have to know which to trust. On a sensor-only cruise the
- * corrected series is genuinely missing, and the raw one is the only salinity
- * there is. */
+// see the STAGE_NOTE comment above for why this is temperature alone, not a
+// wider raw-sensor fallback
+const PRELIMINARY_WITHOUT_BOTTLE_VARS = new Set(["temperature_ave"]);
+
+/* Which variables can actually be drawn for this cruise, in display order. */
 function availableVars(cruise) {
   const have = new Set(cruise.vars);
+
+  if (cruise.data_stage === "preliminary_without_bottle") {
+    return state.index.variables.filter(
+      (v) => PRELIMINARY_WITHOUT_BOTTLE_VARS.has(v.var) && have.has(v.var));
+  }
+
+  /* Past the bottle merge, every corrected series that will ever exist for
+   * this cruise already does, so an uncorrected `prefer` entry never actually
+   * shows here in practice — it stays as a fallback rule rather than dead
+   * code, in case a future stage needs the same "raw only if corrected is
+   * missing" behaviour without the temperature-only restriction above. */
   return state.index.variables.filter((v) => {
     if (!have.has(v.var)) return false;
     if (v.prefer && have.has(v.prefer)) return false;
@@ -238,6 +254,10 @@ function resolve(sel) {
 }
 
 /* ── the section plot ────────────────────────────────────────────────────── */
+
+// shared with thinStationTicks below, so the pixel budget it measures against
+// can never silently drift from the margin the plot actually renders with
+const PLOT_MARGIN_L = 58, PLOT_MARGIN_R = 86;
 
 /* Contour levels, computed here rather than left to Plotly's `autocontour`.
  *
@@ -401,12 +421,19 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     showlegend: false,
   });
 
+  // shared with thinStationTicks below: the axis range it thins against must
+  // be the SAME range the axis actually renders with, not recomputed
+  const xRange = useLine
+    ? [lineExtent(shard.line) ?? Math.max(...x), 0]
+    : [Math.max(...x), Math.min(...x)];
+  const ticks = thinStationTicks(x, shard.stations, xRange);
+
   const layout = {
     // r leaves room for the colorbar; without it the bar renders outside the
     // panel and lands on top of the map
     // t carries the plot title AND the station axis above the panel; pinning the
     // title to the container top keeps the two off each other
-    margin: { l: 58, r: 86, t: 92, b: 52 },
+    margin: { l: PLOT_MARGIN_L, r: PLOT_MARGIN_R, t: 92, b: 52 },
     title: {
       text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${zlabel}`,
       font: { size: 15, color: t.ink },
@@ -425,9 +452,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
        * coast, so distance offshore DESCENDS left to right. */
       // On the shared ruler the range is the LINE's full extent, not this
       // cruise's — an axis that resizes with the cruise is not a comparison.
-      range: useLine
-        ? [lineExtent(shard.line) ?? Math.max(...x), 0]
-        : [Math.max(...x), Math.min(...x)],
+      range: xRange,
     },
     /* The station numbers, on top — the classic hydrographic-section convention,
      * and the labels for the tick marks that were already there. Same ruler, so
@@ -437,8 +462,8 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
       overlaying: "x", side: "top", matches: "x",
       showgrid: false, zeroline: false,
       tickmode: "array",
-      tickvals: x,
-      ticktext: shard.stations.map((s) => String(s.sta)),
+      tickvals: ticks.tickvals,
+      ticktext: ticks.ticktext,
       tickfont: { size: 11, color: t.ink },
     },
     yaxis: {
@@ -462,6 +487,36 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 function lineExtent(name) {
   const l = lineByName(name);
   return l && l.extent_km != null ? l.extent_km : null;
+}
+
+/* Station tick labels are placed by km position, not by index, so wherever
+ * stations bunch up — nearly always near the coast, where CalCOFI's station
+ * spacing tightens — their labels collide. Plotly's own auto-rotation cannot
+ * save it: two short labels ("30", "26.7") can still merge edge-to-edge.
+ * Skip a label instead of drawing it if it would land too close, in PIXELS, to
+ * the last label actually kept. Pixels, not km: the same cruise should thin
+ * differently in a narrow window than a wide one, because what overlaps is a
+ * rendered-width fact, not a distance fact. The triangle markers below (the
+ * OTHER trace on this axis) still mark every occupied station either way —
+ * only the printed numbers thin. */
+function thinStationTicks(x, stations, axisRange) {
+  const el = $("plot");
+  const innerPx = Math.max(
+    (el && el.offsetWidth ? el.offsetWidth : 900) - PLOT_MARGIN_L - PLOT_MARGIN_R, 100);
+  const span = Math.abs(axisRange[0] - axisRange[1]) || 1;
+  const pxPerUnit = innerPx / span;
+  const MIN_GAP_PX = 26;   // roughly one rotated "###.#"-width label
+  let lastKeptX = null;
+  const tickvals = [], ticktext = [];
+  stations.forEach((s, i) => {
+    const gapPx = lastKeptX == null ? Infinity : Math.abs(x[i] - lastKeptX) * pxPerUnit;
+    if (gapPx >= MIN_GAP_PX) {
+      tickvals.push(x[i]);
+      ticktext.push(String(s.sta));
+      lastKeptX = x[i];
+    }
+  });
+  return { tickvals, ticktext };
 }
 
 /* ── the map ─────────────────────────────────────────────────────────────── */
@@ -691,6 +746,35 @@ async function init() {
 
     const b = state.index.baseline;
     if (b) {
+      const baseBadge = $("baseline-badge");
+      baseBadge.querySelector("b").textContent = `${b.n_cruises} cruises`;
+      baseBadge.title = `${b.yr_min}–${b.yr_max} climatology baseline, ` +
+        `${b.n_cells.toLocaleString()} station × depth × month cells, ` +
+        `≥${b.min_cruises} cruises required per cell`;
+      baseBadge.hidden = false;
+      if (!baseBadge.dataset.wired) {
+        baseBadge.dataset.wired = "1";
+        baseBadge.addEventListener("click", (e) => {
+          const target = document.getElementById("methods-baseline");
+          const panel = document.getElementById("methods");
+          if (!target || !panel) return;
+          e.preventDefault();
+          panel.open = true;
+          /* One frame so the just-opened <details> has actually reflowed —
+           * otherwise target's position is still the COLLAPSED one, and the
+           * scroll lands short. The header is measured live, not guessed: a
+           * fixed CSS offset drifts the moment brand/v2 resizes its own bar
+           * (it did — 6rem of scroll-margin-top still left the heading
+           * partly under it), a live measurement never can. */
+          requestAnimationFrame(() => {
+            const headerH = document.querySelector(".cc-header").getBoundingClientRect().height;
+            const y = target.getBoundingClientRect().top + window.scrollY - headerH - 16;
+            window.scrollTo({ top: Math.max(y, 0), behavior: "smooth" });
+            history.pushState(null, "", "#methods-baseline");
+          });
+        });
+      }
+
       $("baseline-text").innerHTML =
         `Anomalies on this page are differences from a <strong>${b.yr_min}–` +
         `${b.yr_max}</strong> baseline — the integrated database's own ` +

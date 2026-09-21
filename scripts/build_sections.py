@@ -44,7 +44,7 @@ DISTANCE — TWO RULERS, BOTH BAKED
 ANOMALY
     Each shard carries an `anom` matrix beside every `vars` matrix, differenced
     against the release's own `climatology` table (calcofi4db::build_climatology():
-    station x calendar month x 10 m bin, 1993-2013, >= 3 cruises) — the same
+    station x calendar month x 10 m bin, 1993-2013, >= 5 cruises) — the same
     baseline the CalCOFI Explorer subtracts. Cells with no baseline are null, never 0.
 """
 
@@ -64,19 +64,37 @@ SECTIONS = DATA / "sections"
 DEPTHS = list(range(0, 510, 10))
 
 # Display order and grouping for the variable picker. The corrected forms are the
-# headline series; the uncorrected sensor series exist so that a preliminary_without_bottle
-# cruise — one that has not been through the bottle merge, and therefore has NO
-# corrected salinity or oxygen at all — still plots something rather than an empty
-# panel. `prefer` names the corrected series a raw one stands in for.
+# headline series; the uncorrected sensor series exist so `prefer` can name the
+# corrected series a raw one stands in for (see availableVars() in app.js for where
+# that fallback is actually allowed to fire — it's narrower than "vars present here").
 VAR_ORDER = [
-    ("temperature_ave",          None),
-    ("salinity_ave_corr",        None),
-    ("oxygen_ml_l_ave_sta_corr", None),
-    ("sigma_theta_1",            None),
-    ("fluorescence_v",           None),
-    ("salinity_1",               "salinity_ave_corr"),
-    ("oxygen_ml_l_1",            "oxygen_ml_l_ave_sta_corr"),
+    ("temperature_ave",               None),
+    ("salinity_ave_corr",             None),
+    ("oxygen_ml_l_ave_sta_corr",      None),
+    ("oxygen_ml_l_ave_cruise_corr",   None),
+    ("est_chlorophyll_a_sta_corr",    None),
+    ("est_chlorophyll_a_cruise_corr", None),
+    ("est_nitrate_sta_corr",          None),
+    ("est_nitrate_cruise_corr",       None),
+    ("sigma_theta_1",                 None),
+    ("fluorescence_v",                None),
+    ("salinity_1",                    "salinity_ave_corr"),
+    ("oxygen_ml_l_1",                 "oxygen_ml_l_ave_sta_corr"),
 ]
+
+# metadata/measurement_type.csv (workflows repo) has a row for every variable above
+# EXCEPT oxygen_ml_l_ave_cruise_corr — salinity_ave_corr and oxygen_ml_l_ave_sta_corr
+# were already registered (reused names, redescribed for the sensor-pair-combined
+# value), and chlorophyll/nitrate's sta/cruise pairs both have full entries, but no
+# one ever added the cruise-corrected oxygen row. Without this, the picker falls back
+# to the bare column name (m.get("description") or v). Remove this entry once that
+# registry row exists.
+FALLBACK_META = {
+    "oxygen_ml_l_ave_cruise_corr": {
+        "description": "DO average cruise-corrected",
+        "units": "ml/L",
+    },
+}
 
 # lines with near-complete cruise coverage; everything else is offered but not
 # defaulted to (lines 60-73.3 appear on ~20-27 cruises, vs ~90 for these)
@@ -193,10 +211,11 @@ def main():
         if v not in present:
             continue
         m = var_meta.get(v, {})
+        fb = FALLBACK_META.get(v, {})
         variables.append({
             "var": v,
-            "label": (m.get("description") or v),
-            "units": (m.get("units") or ""),
+            "label": (m.get("description") or fb.get("description") or v),
+            "units": (m.get("units") or fb.get("units") or ""),
             "prefer": prefer,
             "uncorrected": prefer is not None,
         })

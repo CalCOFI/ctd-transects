@@ -46,6 +46,16 @@ a { color: var(--accent); }
 .cc-header .tagline { white-space: normal; }
 @media (max-width: 720px) { .cc-header .tagline { display: none; } }
 
+/* the header is sticky (brand/v2), so an in-page jump lands its target flush
+   under it without this — cut off, not merely close. This is only the
+   fallback path (someone opens a #methods-baseline link directly, so the
+   browser's OWN fragment navigation runs before any of our JS does); the
+   "baseline" badge's click handler in app.js measures the header's actual
+   rendered height instead of guessing — 6rem guessed short and still left
+   the heading partly hidden. Kept generous here for the same reason a guess
+   ever goes wrong: brand can resize its bar without this tracking it. */
+#methods-baseline { scroll-margin-top: 9rem; }
+
 /* ── controls ───────────────────────────────────────────────────────────── */
 
 .controls {

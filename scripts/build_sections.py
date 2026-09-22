@@ -275,17 +275,29 @@ def main():
 
         # z[depth][station] for the anomaly, same shape and same indices, so the
         # app swaps one matrix for the other without touching x, y or stations
+        #
+        # anoms_n carries the same shape again, but with the climatology's
+        # n_cruises for that cell instead of the anomaly value — how many
+        # cruises the baseline this departure is measured against was built
+        # from. It rides along so the app can show it in the hover tooltip
+        # without a second lookup; every anomaly cell has one (same join),
+        # so the two matrices are never out of step.
         anoms = {}
+        anoms_n = {}
         ga = anm_by_sec.get((line_s, cruise_key))
         if ga is not None:
             for v, gv in ga.groupby("var", sort=False):
                 za = [[None] * n_sta for _ in DEPTHS]
-                for s_, d, val in zip(gv["sta"], gv["depth_m"], gv["anomaly"]):
+                zn = [[None] * n_sta for _ in DEPTHS]
+                for s_, d, val, n in zip(gv["sta"], gv["depth_m"], gv["anomaly"],
+                                          gv["n_cruises"]):
                     si = sta_ix.get(float(s_))
                     di = depth_ix.get(int(d))
                     if si is not None and di is not None:
                         za[di][si] = None if pd.isna(val) else float(val)
+                        zn[di][si] = None if pd.isna(n) else int(n)
                 anoms[v] = za
+                anoms_n[v] = zn
 
         knots_along = [x for x in st["line_dist_km"].tolist()]
         prof = None
@@ -301,6 +313,7 @@ def main():
             "depths": DEPTHS,
             "vars": grids,
             "anom": anoms,
+            "anom_n": anoms_n,
             "floor": prof,
         }
 

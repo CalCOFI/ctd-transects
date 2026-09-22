@@ -64,8 +64,13 @@
   <a class="cc-release" id="release" href="https://calcofi.io/db-schema/" hidden>release <b></b></a>
   <!-- how many cruises back the climatology baseline the anomaly view subtracts
        (Rasmus Swalethorp, 2026-09-09 "Next Two Weeks Tasks") — filled by init()
-       from data/index.json's baseline block, same numbers as #baseline-text below -->
-  <a class="cc-release" id="baseline-badge" href="#methods-baseline" hidden>baseline <b></b></a>
+       from data/index.json's baseline block, same numbers as #baseline-text below.
+       While hovering a cell in anomaly mode, drawSection() swaps this to that
+       cell's own n_cruises (see baseline-hint) and back on mouseleave — the
+       release-wide total and the one-cell number share this badge instead of
+       making the reader cross-reference two separate places. -->
+  <a class="cc-release" id="baseline-badge" href="#methods-baseline" hidden
+     >baseline <b></b><span id="baseline-hint" class="baseline-hint"></span></a>
   <span class="cc-spacer"></span>
   <button class="cc-theme-toggle" type="button" aria-label="Toggle dark / light theme">🌓</button>
 </header>

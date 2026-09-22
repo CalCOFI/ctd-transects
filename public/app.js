@@ -288,6 +288,55 @@ function contourLevels(z) {
            end:   snap(Math.floor(hi / size) * size), size: snap(size) };
 }
 
+/* The header badge's default text — the release-wide cruise count. Shared by
+ * init() (first paint) and resetBaselineBadge() below, so the two can't drift
+ * into different wording. */
+function baselineBadgeDefault(b) {
+  return `${b.n_cruises} cruises total`;
+}
+
+function resetBaselineBadge() {
+  const b = state.index.baseline;
+  const badge = $("baseline-badge");
+  if (!b || !badge) return;
+  badge.querySelector("b").textContent = baselineBadgeDefault(b);
+  $("baseline-hint").textContent = "";
+  badge.classList.remove("thin");
+}
+
+/* Swaps the header badge to the hovered cell's own baseline size — same
+ * number, same "at the minimum" threshold as the tooltip (see drawSection's
+ * hovertemplate below), just also visible to someone glancing at the header
+ * rather than reading the tooltip line by line. */
+function syncBaselineBadgeTo(n) {
+  const b = state.index.baseline;
+  const badge = $("baseline-badge");
+  if (!b || !badge) return;
+  const thin = n <= b.min_cruises;
+  badge.querySelector("b").textContent = `${n} cruise${n === 1 ? "" : "s"}`;
+  $("baseline-hint").textContent = thin
+    ? "— at the release's own minimum" : "— this cell";
+  badge.classList.toggle("thin", thin);
+}
+
+/* Wired once per graph div — Plotly.react reuses the same element across
+ * re-renders, so re-registering on every drawSection call would stack
+ * duplicate listeners (mirrors the baseBadge click-handler guard in init()).
+ * plotly_hover's customdata[2] is undefined for the station-tick markers
+ * trace and for any cell with no baseline (value mode, or an anomaly cell
+ * outside the climatology join) — both correctly fall back to the default. */
+function wireBaselineBadgeSync(plotEl) {
+  if (!plotEl || plotEl.dataset.baselineHoverWired) return;
+  plotEl.dataset.baselineHoverWired = "1";
+  plotEl.on("plotly_hover", (ev) => {
+    const pt = ev.points && ev.points[0];
+    const n = pt && pt.customdata ? pt.customdata[2] : null;
+    if (n == null) resetBaselineBadge();
+    else syncBaselineBadgeTo(n);
+  });
+  plotEl.on("plotly_unhover", resetBaselineBadge);
+}
+
 function drawSection(shard, varName, maxDepth, mode, ruler) {
   const meta = state.index.variables.find((v) => v.var === varName);
   const anom = mode === "anomaly";
@@ -303,6 +352,10 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
   const y = keep.map(([d]) => d);
   const grid = anom ? (shard.anom || {})[varName] : shard.vars[varName];
   const z = grid ? keep.map(([, i]) => grid[i]) : keep.map(() => x.map(() => null));
+  // per-cell baseline support, anomaly view only — same shape as `grid`, so the
+  // same `keep`-filtered depth index lines it up with `z` row for row
+  const nGrid = anom ? (shard.anom_n || {})[varName] : null;
+  const baseline = state.index.baseline;
 
   const t = theme();
   const units = meta.units || "";
@@ -334,11 +387,34 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
      * the note under the plot instead, which says it precisely rather than
      * leaving the reader to estimate blank area by eye. */
     connectgaps: true,
+    // customdata[0] is the station/distance label, always present.
+    // customdata[1] is the baseline line — only in anomaly mode, where a
+    // departure is only as trustworthy as the climatology it's measured
+    // against. It's the same n_cruises Ben asked to see per cell, added
+    // right where a reader is already looking rather than as a second
+    // number to cross-reference. Below the release's own required minimum
+    // per cell it says so plainly instead of just printing a small number.
+    // customdata[2] is that same n_cruises as a bare number (or omitted) —
+    // wireBaselineBadge()'s hover handler reads it to keep the header badge
+    // in sync with whatever cell the pointer is over, without re-deriving or
+    // re-formatting what's already computed right here.
     hovertemplate:
-      "%{customdata}<br>Depth: %{y} m<br>" +
-      `${zlabel}: %{z}${units ? " " + units : ""}<extra></extra>`,
-    customdata: z.map((row) =>
-      row.map((_, j) => `Station ${shard.stations[j].sta} · ${x[j].toFixed(0)} km`)),
+      "%{customdata[0]}<br>Depth: %{y} m<br>" +
+      `${zlabel}: %{z}${units ? " " + units : ""}` +
+      "%{customdata[1]}<extra></extra>",
+    customdata: z.map((row, di) => {
+      const nRow = nGrid ? nGrid[keep[di][1]] : null;
+      return row.map((_, j) => {
+        const label = `Station ${shard.stations[j].sta} · ${x[j].toFixed(0)} km`;
+        const n = nRow ? nRow[j] : null;
+        if (n == null || !baseline) return [label, ""];
+        const thin = n <= baseline.min_cruises;
+        const line = thin
+          ? `<br>baseline: ${n} cruise${n === 1 ? "" : "s"} — at the release's own minimum`
+          : `<br>baseline: ${n} cruises (${baseline.yr_min}–${baseline.yr_max})`;
+        return [label, line, n];
+      });
+    }),
     colorbar: {
       title: { text: anom ? (units ? "\u0394 " + units : "\u0394") : units,
                side: "right" },
@@ -482,6 +558,10 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 
   Plotly.react($("plot"), traces, layout,
     { responsive: true, displaylogo: false });
+  wireBaselineBadgeSync($("plot"));
+  // a fresh section means whatever cell the badge was synced to no longer
+  // exists on screen — start each render back at the release-wide total
+  resetBaselineBadge();
 }
 
 function lineExtent(name) {
@@ -747,7 +827,12 @@ async function init() {
     const b = state.index.baseline;
     if (b) {
       const baseBadge = $("baseline-badge");
-      baseBadge.querySelector("b").textContent = `${b.n_cruises} cruises`;
+      // "total" matters here: this is the release-wide cruise count behind the
+      // whole climatology table, not a per-cell figure — without it "baseline
+      // 84 cruises" reads like a single fixed baseline size, which it isn't
+      // (any one cell's baseline is built from far fewer — see the hover,
+      // which syncs this same badge to whatever cell is under the pointer).
+      baseBadge.querySelector("b").textContent = baselineBadgeDefault(b);
       baseBadge.title = `${b.yr_min}–${b.yr_max} climatology baseline, ` +
         `${b.n_cells.toLocaleString()} station × depth × month cells, ` +
         `≥${b.min_cruises} cruises required per cell`;

@@ -292,7 +292,26 @@ function contourLevels(z) {
  * init() (first paint) and resetBaselineBadge() below, so the two can't drift
  * into different wording. */
 function baselineBadgeDefault(b) {
+  // in the anomaly view, the range of baseline sizes behind the section on screen
+  // (Rasmus, 2026-09-09: "maybe a min-max range since it will depend on station
+  // and depth"); otherwise the release-wide total
+  const r = state.sectionN;
+  if (r) return r.lo === r.hi ? `${r.lo} cruises this section`
+                              : `${r.lo}–${r.hi} cruises this section`;
   return `${b.n_cruises} cruises total`;
+}
+
+/* Min and max baseline size over the cells of the section in view, or null
+ * when there is no anomaly grid to measure. */
+function sectionNRange(nGrid) {
+  if (!nGrid) return null;
+  let lo = Infinity, hi = -Infinity;
+  for (const row of nGrid) for (const n of row) {
+    if (n == null) continue;
+    if (n < lo) lo = n;
+    if (n > hi) hi = n;
+  }
+  return Number.isFinite(lo) ? { lo, hi } : null;
 }
 
 function resetBaselineBadge() {
@@ -356,6 +375,8 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
   // same `keep`-filtered depth index lines it up with `z` row for row
   const nGrid = anom ? (shard.anom_n || {})[varName] : null;
   const baseline = state.index.baseline;
+  state.sectionN = sectionNRange(nGrid ? keep.map(([, i]) => nGrid[i]) : null);
+  resetBaselineBadge();
 
   const t = theme();
   const units = meta.units || "";

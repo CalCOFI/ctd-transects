@@ -57,7 +57,7 @@ variable per view, ~20 KB per shard, 671 shards. The app fetches one at a time.
 
 The anomaly view subtracts the release's own **`climatology`** table
 (`calcofi4db::build_climatology()`: station × calendar month × 10 m bin,
-1993–2013, at least 3 cruises per cell), which the CalCOFI Explorer's Sections
+1993–2013, at least 5 cruises per cell), which the CalCOFI Explorer's Sections
 lens subtracts too — one baseline, so the two products cannot disagree. For a
 release that predates the table, `scripts/resolve_release.py` inlines
 `scripts/climatology_fallback.sql` (the same definition) and says so.

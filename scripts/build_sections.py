@@ -63,10 +63,10 @@ SECTIONS = DATA / "sections"
 # build_sections.sql and the release's climatology / obs_env depth_bin
 DEPTHS = list(range(0, 510, 10))
 
-# Display order and grouping for the variable picker. The corrected forms are the
-# headline series; the uncorrected sensor series exist so `prefer` can name the
-# corrected series a raw one stands in for (see availableVars() in app.js for where
-# that fallback is actually allowed to fire — it's narrower than "vars present here").
+# Display order for the variable picker: the corrected, sensor-pair-combined series
+# only. The uncorrected per-sensor salinity_1 / oxygen_ml_l_1 fallbacks are gone
+# (Rasmus, 2026-09-16: "individual sensors … we can get rid of"); sigma_theta_1 and
+# fluorescence_v stay until their replacements land (ctd-transects#5, #10).
 VAR_ORDER = [
     ("temperature_ave",               None),
     ("salinity_ave_corr",             None),
@@ -78,17 +78,21 @@ VAR_ORDER = [
     ("est_nitrate_cruise_corr",       None),
     ("sigma_theta_1",                 None),
     ("fluorescence_v",                None),
-    ("salinity_1",                    "salinity_ave_corr"),
-    ("oxygen_ml_l_1",                 "oxygen_ml_l_ave_sta_corr"),
 ]
 
-# metadata/measurement_type.csv (workflows repo) has a row for every variable above
-# EXCEPT oxygen_ml_l_ave_cruise_corr — salinity_ave_corr and oxygen_ml_l_ave_sta_corr
-# were already registered (reused names, redescribed for the sensor-pair-combined
-# value), and chlorophyll/nitrate's sta/cruise pairs both have full entries, but no
-# one ever added the cruise-corrected oxygen row. Without this, the picker falls back
-# to the bare column name (m.get("description") or v). Remove this entry once that
-# registry row exists.
+# What a cruise at each processing tier may show, enforced HERE so the published
+# JSON carries the rule, not only the browser (app.js availableVars() applies the
+# same set). A CTD-only preliminary cruise has had no bottle correction, and a
+# drifting or uncalibrated sensor reads as a real signal in the anomaly view
+# (Rasmus, 2026-09-09), so it ships temperature only. None = no restriction.
+STAGE_VARS = {
+    "preliminary_without_bottle": {"temperature_ave"},
+}
+
+# The release's measurement_type registry has no row yet for
+# oxygen_ml_l_ave_cruise_corr (added in CalCOFI/workflows, reaching the next
+# release); until then the picker would show the bare column name. Delete this entry
+# once `index.json` shows the registry's own label for it.
 FALLBACK_META = {
     "oxygen_ml_l_ave_cruise_corr": {
         "description": "DO average cruise-corrected",
@@ -305,6 +309,11 @@ def main():
             prof = floor_profile(floor_by_line.get(line_s), knots_along, dist)
 
         stage = st["data_stage"].dropna()
+        allowed = STAGE_VARS.get(stage.iloc[0] if len(stage) else None)
+        if allowed is not None:
+            grids = {v: z for v, z in grids.items() if v in allowed}
+            anoms = {v: z for v, z in anoms.items() if v in allowed}
+            anoms_n = {v: z for v, z in anoms_n.items() if v in allowed}
         shard = {
             "line": line_s,
             "cruise_key": cruise_key,

@@ -142,9 +142,7 @@ WHERE o.dataset_key = 'calcofi_ctd-cast'
     'est_nitrate_sta_corr',
     'est_nitrate_cruise_corr',
     'sigma_theta_1',
-    'fluorescence_v',
-    'salinity_1',
-    'oxygen_ml_l_1')
+    'fluorescence_v')
 GROUP BY ALL;
 
 -- ── cast-level metadata, one row per (line, cruise, station) ─────────────────

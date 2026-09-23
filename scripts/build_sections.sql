@@ -27,7 +27,7 @@ INSTALL spatial; LOAD spatial;
 -- The baseline is the release's own `climatology` table (calcofi4db::
 -- build_climatology(), run once when the release is cut): a plain mean per
 -- dataset x station x calendar month x 10 m floor depth bin x measurement type
--- over 1993-2013, kept where at least 3 distinct cruises contribute, the window
+-- over 1993-2013, kept where at least 5 distinct cruises contribute, the window
 -- stamped on every row (clim_yr_min / clim_yr_max). This app, the CalCOFI
 -- Explorer's Sections lens and calcofi4r::cc_climatology() all subtract that one
 -- table — until 2026-08-31 each computed its own and they had drifted (one pooled
@@ -136,10 +136,13 @@ WHERE o.dataset_key = 'calcofi_ctd-cast'
     'temperature_ave',
     'salinity_ave_corr',
     'oxygen_ml_l_ave_sta_corr',
+    'oxygen_ml_l_ave_cruise_corr',
+    'est_chlorophyll_a_sta_corr',
+    'est_chlorophyll_a_cruise_corr',
+    'est_nitrate_sta_corr',
+    'est_nitrate_cruise_corr',
     'sigma_theta_1',
-    'fluorescence_v',
-    'salinity_1',
-    'oxygen_ml_l_1')
+    'fluorescence_v')
 GROUP BY ALL;
 
 -- ── cast-level metadata, one row per (line, cruise, station) ─────────────────

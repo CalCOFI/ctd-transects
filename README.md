@@ -57,7 +57,7 @@ variable per view, ~20 KB per shard, 671 shards. The app fetches one at a time.
 
 The anomaly view subtracts the release's own **`climatology`** table
 (`calcofi4db::build_climatology()`: station × calendar month × 10 m bin,
-1993–2013, at least 3 cruises per cell), which the CalCOFI Explorer's Sections
+1993–2013, at least 5 cruises per cell), which the CalCOFI Explorer's Sections
 lens subtracts too — one baseline, so the two products cannot disagree. For a
 release that predates the table, `scripts/resolve_release.py` inlines
 `scripts/climatology_fallback.sql` (the same definition) and says so.
@@ -131,10 +131,13 @@ a badge because it changes what the numbers mean:
 | `preliminary_with_bottle` | Preliminary — CTD & bottle | bottle merge done; values may still shift after post-cruise calibration |
 | `preliminary_without_bottle` | Preliminary — CTD only | **no bottle merge yet**, so bottle-corrected salinity, oxygen and chlorophyll do not exist for this cruise |
 
-On a `preliminary_without_bottle` cruise the app offers the **uncorrected** sensor series
-(`salinity_1`, `oxygen_ml_l_1`), clearly labelled, instead of an empty panel. The
-uncorrected series are hidden whenever the corrected ones exist, so the picker
-never shows two near-identical salinities.
+On a `preliminary_without_bottle` cruise the app shows **temperature only**. Salinity,
+oxygen, chlorophyll and nitrate all depend on sensor calibration that the bottle merge
+corrects for, and an uncorrected reading can look like a real signal — especially in
+the anomaly view — before that merge has run (Rasmus Swalethorp, 2026-09-09: hold off
+on showing the raw sensor series here at all). The restriction is
+`PRELIMINARY_WITHOUT_BOTTLE_VARS` in `app.js`; nothing here needs to change as a cruise
+moves through the merge, since `availableVars()` re-evaluates from `data_stage`.
 
 ## Links
 

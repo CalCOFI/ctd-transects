@@ -5,7 +5,8 @@
 -- says __TBL:climatology__ and the catalog has no such table — and says so on stderr.
 -- It is the SAME definition as calcofi4db::build_climatology(), which is what the release
 -- runs: a plain mean per dataset x station x calendar month x 10 m floor depth bin x
--- measurement type over 1993-2013, kept where at least 3 distinct cruises contribute —
+-- measurement type over 1993-2013, kept where at least 5 distinct cruises contribute
+-- (raised from 3 — Rasmus Swalethorp, 2026-09-09) —
 -- the station being sample.site_key (the real line/station), not the grid cell, since
 -- calcofi4db 4.8.0; grid_key rides along as the station's modal cell.
 -- Restricted to the CTD dataset here because that is the only one this app reads; the
@@ -33,4 +34,4 @@ WHERE o.realm = 'env'
   AND year(o.datetime) BETWEEN 1993 AND 2013
   AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
 GROUP BY o.dataset_key, s.site_key, month, depth_bin, o.measurement_type
-HAVING count(DISTINCT o.cruise_key) >= 3
+HAVING count(DISTINCT o.cruise_key) >= 5

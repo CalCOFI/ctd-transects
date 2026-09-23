@@ -62,6 +62,10 @@
   <!-- the integrated-database release the sections were built from (data/version.json);
        filled by init(), hidden until then. Links to that version's schema + release notes. -->
   <a class="cc-release" id="release" href="https://calcofi.io/db-schema/" hidden>release <b></b></a>
+  <!-- the climatology baseline behind the anomaly view: the section's min-max cruise
+       count, or the hovered cell's own (filled by app.js from data/index.json) -->
+  <a class="cc-release" id="baseline-badge" href="#methods-baseline" hidden
+     >baseline <b></b><span id="baseline-hint" class="baseline-hint"></span></a>
   <span class="cc-spacer"></span>
   <button class="cc-theme-toggle" type="button" aria-label="Toggle dark / light theme">🌓</button>
 </header>

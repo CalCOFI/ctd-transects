@@ -257,7 +257,7 @@ class Render(unittest.TestCase):
         # `sample` too — every table the fallback names has to resolve, not just obs
         self.assertIn(f"JOIN read_parquet('{SAMPLE_CANON}') s USING (sample_key)", out)
         self.assertIn("s.site_key", out)
-        self.assertIn("HAVING count(DISTINCT o.cruise_key) >= 3) WHERE dataset_key = 'x'; -- note", out)
+        self.assertIn("HAVING count(DISTINCT o.cruise_key) >= 5) WHERE dataset_key = 'x'; -- note", out)
         self.assertNotIn("__TBL", out)
         # the fallback's own comment lines are stripped, so nothing after the token is swallowed
         self.assertNotIn("climatology_fallback.sql —", out)

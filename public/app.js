@@ -301,6 +301,20 @@ function baselineBadgeDefault(b) {
   return `${b.n_cruises} cruises total`;
 }
 
+/* Stations that were measured but have no baseline anywhere in their column
+ * (so drawSection leaves them out of the anomaly field), named in the note. */
+function noBaselineNote(shard, zv, za) {
+  if (!zv) return "";
+  const sta = shard.stations
+    .filter((_, j) => zv.some((row) => row[j] != null) &&
+                      !(za && za.some((row) => row && row[j] != null)))
+    .map((s) => s.sta);
+  if (!sta.length) return "";
+  return ` Station${sta.length > 1 ? "s" : ""} ${sta.join(", ")} ` +
+    `ha${sta.length > 1 ? "ve" : "s"} no baseline for this month and ` +
+    `${sta.length > 1 ? "are" : "is"} not drawn.`;
+}
+
 /* Min and max baseline size over the cells of the section in view, or null
  * when there is no anomaly grid to measure. */
 function sectionNRange(nGrid) {
@@ -371,6 +385,18 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
   const y = keep.map(([d]) => d);
   const grid = anom ? (shard.anom || {})[varName] : shard.vars[varName];
   const z = grid ? keep.map(([, i]) => grid[i]) : keep.map(() => x.map(() => null));
+
+  /* A station whose whole column is empty in this view is left out of the
+   * heatmap and the contours. In the anomaly view that is a station with no
+   * baseline for this calendar month (station 27.7 on an August cruise: its
+   * climatology has July only). connectgaps below bridges a depth a cast has no
+   * scan at; across a WHOLE empty column it painted the neighbour's field onto a
+   * station that has none (ctd-transects#11). The station keeps its tick, and
+   * the note under the plot names it. */
+  const cols = x.map((_, j) => j).filter((j) => z.some((row) => row[j] != null));
+  const drawn = new Set(cols);
+  const xd = cols.map((j) => x[j]);
+  const zd = z.map((row) => cols.map((j) => row[j]));
   // per-cell baseline support, anomaly view only — same shape as `grid`, so the
   // same `keep`-filtered depth index lines it up with `z` row for row
   const nGrid = anom ? (shard.anom_n || {})[varName] : null;
@@ -384,7 +410,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 
   const traces = [{
     type: "heatmap",
-    x, y, z,
+    x: xd, y, z: zd,
     // zsmooth is what replaces an interpolation step: the renderer resamples the
     // station x depth matrix into the smooth field an ODV-style section wants
     zsmooth: "best",
@@ -423,9 +449,10 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
       "%{customdata[0]}<br>Depth: %{y} m<br>" +
       `${zlabel}: %{z}${units ? " " + units : ""}` +
       "%{customdata[1]}<extra></extra>",
-    customdata: z.map((row, di) => {
+    customdata: zd.map((row, di) => {
       const nRow = nGrid ? nGrid[keep[di][1]] : null;
-      return row.map((_, j) => {
+      return row.map((_, k) => {
+        const j = cols[k];
         const label = `Station ${shard.stations[j].sta} · ${x[j].toFixed(0)} km`;
         const n = nRow ? nRow[j] : null;
         if (n == null || !baseline) return [label, ""];
@@ -447,7 +474,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     // section readable rather than merely pretty — and they are also the
     // secondary encoding that keeps the plot usable without colour.
     type: "contour",
-    x, y, z,
+    x: xd, y, z: zd,
     /* Same reason as the heatmap above — and it must be stated again here,
      * because contour DEFAULTS it to false and the two traces draw the same z.
      *
@@ -460,7 +487,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
      * thinned series' unsampled depths, exactly as for the heatmap, so bridge
      * them the same way and the two traces describe the same field. */
     connectgaps: true,
-    contours: { ...contourLevels(z), coloring: "none", showlabels: true,
+    contours: { ...contourLevels(zd), coloring: "none", showlabels: true,
                 labelfont: { size: 10, color: t.ink } },
     line: { color: t.contour, width: 1 },
     showscale: false,       // without this the contour adds a SECOND colorbar
@@ -512,8 +539,10 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     x, y: x.map(() => 0),
     marker: { symbol: "triangle-down", size: 9, color: t.ink },
     hovertemplate: shard.stations.map(
-      (s) => `Station ${s.sta}<br>${s.dist_km.toFixed(0)} km offshore` +
+      (s, j) => `Station ${s.sta}<br>${s.dist_km.toFixed(0)} km offshore` +
              (s.bathy_m != null ? `<br>Seafloor ${s.bathy_m.toFixed(0)} m` : "") +
+             (drawn.has(j) ? "" : anom ? "<br>no baseline this month — not drawn"
+                                      : "<br>no data — not drawn") +
              "<extra></extra>"),
     showlegend: false,
   });
@@ -743,7 +772,7 @@ async function render(sel) {
       `and calendar month — the release's own climatology table (${b.n_cruises} ` +
       `cruises, at least ${b.min_cruises} cruises per cell). ${pctAnom}% of this section's measurements have ` +
       `such a baseline; the rest are drawn from neighbouring values and should ` +
-      `not be read closely. See Methods below.`;
+      `not be read closely.` + noBaselineNote(shard, zv, za) + ` See Methods below.`;
     anomNote.hidden = false;
   } else if (!hasAnom && sel.mode === "anomaly") {
     anomNote.textContent =

@@ -241,9 +241,17 @@ function resolve(sel) {
   const vars = availableVars(cruise);
   let v = vars.find((x) => x.var === sel.var);
   if (!v) {
-    // fall back to the corrected series' uncorrected stand-in, then to the first
-    const alt = state.index.variables.find((x) => x.prefer === sel.var);
-    v = (alt && vars.find((x) => x.var === alt.var)) || vars[0];
+    // 1. the build's own fallback for this cruise: a *_sta_corr series that is
+    //    withheld or absent here falls back to its *_cruise_corr sibling
+    //    (scripts/display_rules.py cruise_fallbacks, carried in index.json) —
+    //    the corrected series that IS drawn, not whichever variable is listed first
+    const sib = cruise.fallback && cruise.fallback[sel.var];
+    v = sib && vars.find((x) => x.var === sib);
+    // 2. the corrected series' uncorrected stand-in, then 3. the first on offer
+    if (!v) {
+      const alt = state.index.variables.find((x) => x.prefer === sel.var);
+      v = (alt && vars.find((x) => x.var === alt.var)) || vars[0];
+    }
   }
   // mode and ruler are carried through untouched: they are view state, valid for
   // any selection, and dropping them here silently reverted the URL to the
@@ -726,6 +734,25 @@ function drawMap(shard) {
 
 /* ── render ──────────────────────────────────────────────────────────────── */
 
+/* The variables the build left out of THIS section, and why — said, not silently
+ * dropped (Rasmus Swalethorp, 2026-09-29: a field filled between 3 of 15 stations,
+ * and a "nitrate" that was one value per cast). The rule lives in
+ * scripts/display_rules.py and arrives as shard.withheld = {var: reason}. */
+function withheldText(withheld) {
+  const label = Object.fromEntries(
+    state.index.variables.map((v) => [v.var, v.label]));
+  const parts = Object.entries(withheld || {}).map(
+    ([v, why]) => `${label[v] || v} — ${why}`);
+  return parts.length ? "Withheld for this section: " + parts.join("; ") + "." : "";
+}
+
+function renderWithheld(shard) {
+  const el = $("withheld-note");
+  const text = withheldText(shard.withheld);
+  el.textContent = text;
+  el.hidden = !text;
+}
+
 async function render(sel) {
   sel = resolve(sel);
   const { cruise } = syncControls(sel);
@@ -738,6 +765,8 @@ async function render(sel) {
   badge.textContent = STAGE_LABELS[stage] || stage || "";
   badge.hidden = !stage;
   badge.className = "badge " + (stage === "final" ? "badge-final" : "badge-prelim");
+
+  renderWithheld(shard);
 
   const note = $("plot-note");
   if (STAGE_NOTE[stage]) { note.textContent = STAGE_NOTE[stage]; note.hidden = false; }

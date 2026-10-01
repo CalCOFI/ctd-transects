@@ -54,6 +54,12 @@ jobs:
       - name: Self-test the release resolver
         run: python3 scripts/test_resolve_release.py
 
+      # the display rules (sparse / constant-with-depth variables, sections under
+      # 3 stations) are applied by build_sections.py, so the published JSON
+      # carries them; this pins them before anything is rendered
+      - name: Self-test the display rules
+        run: python3 scripts/test_display_rules.py
+
       - name: Rebuild transect data from the integrated DB
         run: |
           # git does not track empty directories, and public/data/ ships empty on

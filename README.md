@@ -120,6 +120,26 @@ three spikes: Fortymile Bank is a ~14 km rise from 652 m to a 178 m crest, and a
 2 km it is four soundings (385, 344, 238, 370 m). 500 m keeps every cell the line
 crosses without implying detail GEBCO does not have.
 
+## What is not drawn
+
+`scripts/display_rules.py` (applied by `build_sections.py`, so the published JSON
+carries the rule; pinned by `scripts/test_display_rules.py`, run in CI) withholds
+what would mislead rather than show it:
+
+- a **section with fewer than 3 stations** is not written or indexed
+  (`MIN_STATIONS`; Rasmus Swalethorp, 2026-09-23);
+- within a section, a **variable with data at fewer than 3 stations** is dropped;
+- within a section, a **variable that is constant with depth at every station that
+  has it over >= 50 m** (6 bins of 10 m) is dropped — a per-cast scalar smeared
+  down the column, not a profile (2026-09-29: `est_nitrate_cruise_corr` on
+  2025-04-3322, whose source `EstNO3_CruiseCorr` holds one value per cast on
+  several cruises).
+
+What went is recorded per shard as `withheld: {var: reason}` (and in the index) and
+the app says so under the controls ("Withheld for this section: …"). Where a
+`*_sta_corr` series is unavailable and its `*_cruise_corr` sibling is drawn, the
+index's per-cruise `fallback` makes the sibling the selector's default.
+
 ## Data stages
 
 `sample.data_stage` reaches consumers with three values, and the app surfaces it as

@@ -169,6 +169,13 @@ main {
   font-size: .8rem;
 }
 
+/* quiet: it sits under the controls, in the muted colour, not in the caveat style */
+.note-withheld {
+  margin: 0;
+  padding: .35rem 1.25rem 0;
+  font-size: .76rem;
+}
+
 /* the stage caveat belongs ABOVE the plot: it changes how the numbers should be
    read, so it cannot be something the reader finds afterwards */
 .note-top {

@@ -46,6 +46,13 @@ ANOMALY
     against the release's own `climatology` table (calcofi4db::build_climatology():
     station x calendar month x 10 m bin, 1993-2013, >= 5 cruises) — the same
     baseline the CalCOFI Explorer subtracts. Cells with no baseline are null, never 0.
+
+WHAT IS NOT DRAWN (scripts/display_rules.py)
+    A section with fewer than 3 stations is not written. Within a section, a
+    variable with data at fewer than 3 stations, or constant with depth at every
+    station that has it over >= 50 m, is dropped and recorded in the shard's
+    `withheld` ({var: reason}) so the app can say so. Rasmus Swalethorp's
+    2026-09-29 screenshots of line 93.3 / 2025-04-3322 are the fixtures.
 """
 
 import json
@@ -55,6 +62,9 @@ from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
+
+from display_rules import (MIN_STATIONS, apply_variable_rules, cruise_fallbacks,
+                           section_is_drawable)
 
 DATA = Path("public/data")
 SECTIONS = DATA / "sections"
@@ -231,11 +241,15 @@ def main():
     depth_ix = {d: i for i, d in enumerate(DEPTHS)}
     index_lines = defaultdict(dict)
     n_written = 0
+    n_skipped = {"stations": 0, "variables": 0}
 
     for (line_s, cruise_key), g in sec.groupby(["line_s", "cruise_key"], sort=False):
         st = (sta[(sta["line_s"] == line_s) & (sta["cruise_key"] == cruise_key)]
               .sort_values("sta"))          # ascending station = nearshore -> offshore
-        if st.empty:
+        # a section is a transect: fewer than MIN_STATIONS stations is a pair of
+        # profiles, not a section (Rasmus, 2026-09-23) — not emitted, not indexed
+        if len(st) < MIN_STATIONS:
+            n_skipped["stations"] += 1
             continue
 
         lons = st["lon"].tolist()
@@ -314,6 +328,13 @@ def main():
             grids = {v: z for v, z in grids.items() if v in allowed}
             anoms = {v: z for v, z in anoms.items() if v in allowed}
             anoms_n = {v: z for v, z in anoms_n.items() if v in allowed}
+        # per-variable display rules, applied to the measured matrices and carried
+        # through to the anomaly ones; `withheld` says what went and why, so the
+        # app can tell the reader rather than silently omit it
+        grids, anoms, anoms_n, withheld = apply_variable_rules(grids, anoms, anoms_n)
+        if not section_is_drawable(n_sta, grids):
+            n_skipped["variables"] += 1
+            continue
         shard = {
             "line": line_s,
             "cruise_key": cruise_key,
@@ -324,6 +345,7 @@ def main():
             "anom": anoms,
             "anom_n": anoms_n,
             "floor": prof,
+            "withheld": withheld,
         }
 
         fn = f"{slug(line_s)}__{slug(cruise_key)}.json"
@@ -338,6 +360,11 @@ def main():
             "n_stations": n_sta,
             "vars": sorted(grids.keys()),
             "anom_vars": sorted(anoms.keys()),
+            "withheld": withheld,
+            # unavailable *_sta_corr -> its *_cruise_corr sibling, where drawn;
+            # the app's fallback when the selected variable is not on offer here
+            "fallback": cruise_fallbacks(
+                {x["var"] for x in variables} | set(withheld), grids.keys()),
             "file": f"sections/{fn}",
         }
 
@@ -422,6 +449,8 @@ def main():
     total = sum(p.stat().st_size for p in SECTIONS.glob("*.json"))
     print(f"sections : {n_written} shards, {total / 1e6:.1f} MB "
           f"(mean {total / max(n_written, 1) / 1e3:.0f} KB)")
+    print(f"skipped  : {n_skipped['stations']} sections with < {MIN_STATIONS} stations, "
+          f"{n_skipped['variables']} with no drawable variable")
     print(f"index    : {len(lines)} lines, {len(variables)} variables")
     print(f"stations : {len(stations_json)} grid stations")
     print(f"baseline : {int(bas['yr_min'])}-{int(bas['yr_max'])}, "

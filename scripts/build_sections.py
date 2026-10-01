@@ -49,8 +49,9 @@ ANOMALY
 
 WHAT IS NOT DRAWN (scripts/display_rules.py)
     A section with fewer than 3 stations is not written. Within a section, a
-    variable with data at fewer than 3 stations, or constant with depth at every
-    station that has it over >= 50 m, is dropped and recorded in the shard's
+    variable with data at fewer than 3 stations or fewer than half the section's
+    stations, or constant with depth at every station that has it over >= 50 m,
+    is dropped and recorded in the shard's
     `withheld` ({var: reason}) so the app can say so. Rasmus Swalethorp's
     2026-09-29 screenshots of line 93.3 / 2025-04-3322 are the fixtures.
 """

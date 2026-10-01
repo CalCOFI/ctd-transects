@@ -128,7 +128,10 @@ what would mislead rather than show it:
 
 - a **section with fewer than 3 stations** is not written or indexed
   (`MIN_STATIONS`; Rasmus Swalethorp, 2026-09-23);
-- within a section, a **variable with data at fewer than 3 stations** is dropped;
+- within a section, a **variable with data at fewer than 3 stations, or at fewer than
+  half the section's stations** (`MIN_STATION_FRACTION`), is dropped, with reason
+  "data at N of M stations" (2025-04-3322's DO, at 3 of 15 stations, was filled across
+  as one block);
 - within a section, a **variable that is constant with depth at every station that
   has it over >= 50 m** (6 bins of 10 m) is dropped — a per-cast scalar smeared
   down the column, not a profile (2026-09-29: `est_nitrate_cruise_corr` on

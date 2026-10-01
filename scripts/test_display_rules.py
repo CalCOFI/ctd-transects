@@ -34,21 +34,47 @@ class TestConstants(unittest.TestCase):
 
 
 class TestSparse(unittest.TestCase):
-    def test_three_of_fifteen_stations_is_not_sparse_but_two_is(self):
-        # rule 1 boundary: "fewer than 3" -> 3 stays, 2 goes
-        three = grid(15, lambda j, i: profile(j, i) if j in (6, 7, 8) else None)
-        two = grid(15, lambda j, i: profile(j, i) if j in (6, 7) else None)
-        self.assertEqual(dr.n_stations_with_data(three), 3)
-        self.assertIsNone(dr.withhold_reason(three))
-        self.assertEqual(dr.withhold_reason(two), "fewer than 3 stations")
+    def test_named_fraction(self):
+        self.assertEqual(dr.MIN_STATION_FRACTION, 0.5)
 
-    def test_oxygen_at_one_station_is_withheld(self):
+    def test_min_stations_boundary_in_a_three_station_section(self):
+        # rule 1a: "fewer than 3" -> 3 of 3 stays; 2 of 3 goes (also under 50%? no,
+        # 2 of 3 is > half, so this is the absolute floor doing the work)
+        three = grid(3, profile)
+        two = grid(3, lambda j, i: profile(j, i) if j < 2 else None)
+        self.assertIsNone(dr.withhold_reason(three))
+        self.assertEqual(dr.withhold_reason(two), "data at 2 of 3 stations")
+
+    def test_fraction_boundary_is_fewer_than_half(self):
+        # rule 1b: 7 of 15 is under half and goes; 8 of 15 is over half and stays;
+        # exactly half (3 of 6) stays
+        seven = grid(15, lambda j, i: profile(j, i) if j < 7 else None)
+        eight = grid(15, lambda j, i: profile(j, i) if j < 8 else None)
+        half = grid(6, lambda j, i: profile(j, i) if j < 3 else None)
+        self.assertEqual(dr.withhold_reason(seven), "data at 7 of 15 stations")
+        self.assertIsNone(dr.withhold_reason(eight))
+        self.assertIsNone(dr.withhold_reason(half))
+
+    def test_oxygen_3_of_15_regression_2025_04_3322(self):
+        # Rasmus 2026-09-29: oxygen_ml_l_ave_sta_corr on line 93.3, 2025-04-3322 has
+        # data at 3 of 15 stations (6, 7, 8) and was filled across as one block
+        z = grid(15, lambda j, i: profile(j, i) if j in (6, 7, 8) else None)
+        self.assertEqual(dr.n_stations_with_data(z), 3)
+        self.assertEqual(dr.withhold_reason(z), "data at 3 of 15 stations")
+
+    def test_full_short_sections_are_not_over_withheld(self):
+        # 5 of 5 and 4 of 4 are full coverage of a short section: kept
+        self.assertIsNone(dr.withhold_reason(grid(5, profile)))
+        self.assertIsNone(dr.withhold_reason(grid(4, profile)))
+        self.assertIsNone(dr.withhold_reason(grid(3, profile)))
+
+    def test_one_station_of_many_is_withheld(self):
         z = grid(15, lambda j, i: profile(j, i) if j == 7 else None)
-        self.assertEqual(dr.withhold_reason(z), "fewer than 3 stations")
+        self.assertEqual(dr.withhold_reason(z), "data at 1 of 15 stations")
 
     def test_all_null_is_sparse(self):
         self.assertEqual(dr.withhold_reason(grid(15, lambda j, i: None)),
-                         "fewer than 3 stations")
+                         "data at 0 of 15 stations")
 
     def test_nan_counts_as_no_data(self):
         z = grid(5, lambda j, i: float("nan") if j > 1 else profile(j, i))
@@ -101,7 +127,7 @@ class TestConstantWithDepth(unittest.TestCase):
 
     def test_sparse_reason_wins_over_constant(self):
         z = grid(15, lambda j, i: 2.0 if j == 0 else None)
-        self.assertEqual(dr.withhold_reason(z), "fewer than 3 stations")
+        self.assertEqual(dr.withhold_reason(z), "data at 1 of 15 stations")
 
 
 class TestApplyVariableRules(unittest.TestCase):
@@ -120,7 +146,7 @@ class TestApplyVariableRules(unittest.TestCase):
         self.assertEqual(list(a), ["temperature_ave"])
         self.assertEqual(list(n), ["temperature_ave"])
         self.assertEqual(w, {
-            "oxygen_ml_l_ave_sta_corr": "fewer than 3 stations",
+            "oxygen_ml_l_ave_sta_corr": "data at 2 of 15 stations",
             "est_nitrate_cruise_corr": "constant with depth at every station (source column suspect)",
         })
 
@@ -193,19 +219,22 @@ class TestRasmus20250422(unittest.TestCase):
         g = {
             "temperature_ave": grid(15, profile),
             "oxygen_ml_l_ave_sta_corr": grid(15, lambda j, i: profile(j, i) if j in (6, 7, 8) else None),
+            "oxygen_ml_l_ave_cruise_corr": grid(15, profile),
             "est_nitrate_cruise_corr": grid(15, lambda j, i: 0.5 + 0.25 * j),
             "est_nitrate_sta_corr": grid(15, profile),
         }
         kept, w = dr.apply_variable_rules(g)
+        # (a) DO at 3 of 15 stations is withheld and the reader lands on the
+        #     cruise-corrected sibling
         # (b) one nitrate value per cast is withheld; its station-corrected sibling stays
-        self.assertEqual(w, {"est_nitrate_cruise_corr": dr.WITHHELD_CONSTANT_REASON})
-        self.assertEqual(sorted(kept), ["est_nitrate_sta_corr", "oxygen_ml_l_ave_sta_corr",
+        self.assertEqual(w, {
+            "oxygen_ml_l_ave_sta_corr": "data at 3 of 15 stations",
+            "est_nitrate_cruise_corr": dr.WITHHELD_CONSTANT_REASON,
+        })
+        self.assertEqual(sorted(kept), ["est_nitrate_sta_corr", "oxygen_ml_l_ave_cruise_corr",
                                         "temperature_ave"])
-        # (a) DEFINITION OF THE THRESHOLD, not a bug: oxygen at exactly 3 of 15
-        # stations is kept by "fewer than 3". One station fewer and it goes.
-        g["oxygen_ml_l_ave_sta_corr"] = grid(15, lambda j, i: profile(j, i) if j in (6, 7) else None)
-        kept, w = dr.apply_variable_rules(g)
-        self.assertEqual(w["oxygen_ml_l_ave_sta_corr"], "fewer than 3 stations")
+        self.assertEqual(dr.cruise_fallbacks(set(w), kept),
+                         {"oxygen_ml_l_ave_sta_corr": "oxygen_ml_l_ave_cruise_corr"})
 
 
 if __name__ == "__main__":

@@ -16,8 +16,11 @@ WHY (Rasmus Swalethorp, 2026-09-29 screenshots of line 93.3, cruise 2025-04-3322
     has less than 3 stations on it."
 
 THE RULES (all per section; a "section" is one line x one cruise)
-    1. sparse    — a variable with data at fewer than MIN_STATIONS stations is
-                   withheld.
+    1. sparse    — a variable with data at fewer than MIN_STATIONS stations, OR at
+                   fewer than MIN_STATION_FRACTION of the section's stations, is
+                   withheld (reason "data at N of M stations"). The fraction is
+                   what catches 2025-04-3322's DO: 3 of 15 stations clears "at
+                   least 3" and still fills one block across the section.
     2. constant  — a variable that is depth-invariant at EVERY station that has it
                    over >= MIN_INVARIANT_BINS depth bins (50 m of 10 m bins) is
                    withheld: a profile that does not change with depth over 50 m+
@@ -37,6 +40,7 @@ Matrices are the shard's `z[depth][station]` lists, None = no value.
 import math
 
 MIN_STATIONS = 3          # stations a section / variable needs ("less than 3" is out)
+MIN_STATION_FRACTION = 0.5  # ... and of this share of the section's stations
 MIN_INVARIANT_BINS = 6    # depth bins (10 m each = 50 m) before "constant" is judged
 CONSTANT_TOL = 1e-9       # std (or range) below this = identical
 
@@ -44,8 +48,15 @@ STA_SUFFIX = "_sta_corr"
 CRUISE_SUFFIX = "_cruise_corr"
 
 
-def withheld_sparse_reason(min_stations=MIN_STATIONS):
-    return f"fewer than {min_stations} stations"
+def sparse_reason(n_with, n_total):
+    """The shard's reason text for a sparse variable: 'data at 3 of 15 stations'."""
+    return f"data at {n_with} of {n_total} stations"
+
+
+def is_sparse(n_with, n_total, min_stations=MIN_STATIONS,
+              min_fraction=MIN_STATION_FRACTION):
+    """Fewer than min_stations stations, or fewer than min_fraction of n_total."""
+    return n_with < min_stations or n_with < min_fraction * n_total
 
 
 WITHHELD_CONSTANT_REASON = "constant with depth at every station (source column suspect)"
@@ -81,8 +92,9 @@ def is_depth_invariant(z, min_bins=MIN_INVARIANT_BINS, tol=CONSTANT_TOL):
 
 def withhold_reason(z, min_stations=MIN_STATIONS):
     """Why this variable should not be drawn for the section, or None to draw it."""
-    if n_stations_with_data(z) < min_stations:
-        return withheld_sparse_reason(min_stations)
+    n_with, n_total = n_stations_with_data(z), (len(z[0]) if z else 0)
+    if is_sparse(n_with, n_total, min_stations):
+        return sparse_reason(n_with, n_total)
     if is_depth_invariant(z):
         return WITHHELD_CONSTANT_REASON
     return None

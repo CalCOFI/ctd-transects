@@ -65,7 +65,7 @@ from pathlib import Path
 import pandas as pd
 
 from display_rules import (MIN_STATIONS, apply_variable_rules, cruise_fallbacks,
-                           section_is_drawable)
+                           section_is_drawable, stage_filter)
 
 DATA = Path("public/data")
 SECTIONS = DATA / "sections"
@@ -76,29 +76,37 @@ DEPTHS = list(range(0, 510, 10))
 
 # Display order for the variable picker: the corrected, sensor-pair-combined series
 # only. The uncorrected per-sensor salinity_1 / oxygen_ml_l_1 fallbacks are gone
-# (Rasmus, 2026-09-16: "individual sensors … we can get rid of"); sigma_theta_1 and
-# fluorescence_v stay until their replacements land (ctd-transects#5, #10).
+# (Rasmus, 2026-09-16: "individual sensors … we can get rid of"). sigma_theta_1 is
+# replaced by calcofi_ctd-derived's sensor-pair average sigma_theta_ave, with no
+# fallback to sensor 1 (ctd-transects#5); spiciness0 is new (#6). fluorescence_v
+# stays until Rasmus decides on it (#10).
 VAR_ORDER = [
     ("temperature_ave",               None),
     ("salinity_ave_corr",             None),
+    ("sigma_theta_ave",               None),
+    ("spiciness0",                    None),
     ("oxygen_ml_l_ave_sta_corr",      None),
     ("oxygen_ml_l_ave_cruise_corr",   None),
     ("est_chlorophyll_a_sta_corr",    None),
     ("est_chlorophyll_a_cruise_corr", None),
     ("est_nitrate_sta_corr",          None),
     ("est_nitrate_cruise_corr",       None),
-    ("sigma_theta_1",                 None),
     ("fluorescence_v",                None),
 ]
 
-# What a cruise at each processing tier may show, enforced HERE so the published
-# JSON carries the rule, not only the browser (app.js availableVars() applies the
-# same set). A CTD-only preliminary cruise has had no bottle correction, and a
-# drifting or uncalibrated sensor reads as a real signal in the anomaly view
-# (Rasmus, 2026-09-09), so it ships temperature only. None = no restriction.
-STAGE_VARS = {
-    "preliminary_without_bottle": {"temperature_ave"},
+# Picker labels where the registry's description is a definition rather than a
+# name (it stays the registry's; this is only what fits in a <select>). The units
+# still come from the registry.
+SHORT_LABEL = {
+    "sigma_theta_ave": "Potential density σθ (sensor-pair average)",
+    "spiciness0":      "Spice (+ spicy, − minty)",
 }
+
+# What a cruise at each processing tier may show is display_rules.STAGE_VARS,
+# enforced HERE so the published JSON carries the rule, not only the browser
+# (app.js availableVars() applies the same set). A CTD-only preliminary cruise has
+# had no bottle correction, and a drifting or uncalibrated sensor reads as a real
+# signal in the anomaly view (Rasmus, 2026-09-09), so it ships temperature only.
 
 # The release's measurement_type registry has no row yet for
 # oxygen_ml_l_ave_cruise_corr (added in CalCOFI/workflows, reaching the next
@@ -229,7 +237,8 @@ def main():
         fb = FALLBACK_META.get(v, {})
         variables.append({
             "var": v,
-            "label": (m.get("description") or fb.get("description") or v),
+            "label": (SHORT_LABEL.get(v) or m.get("description")
+                      or fb.get("description") or v),
             "units": (m.get("units") or fb.get("units") or ""),
             "prefer": prefer,
             "uncorrected": prefer is not None,
@@ -324,11 +333,8 @@ def main():
             prof = floor_profile(floor_by_line.get(line_s), knots_along, dist)
 
         stage = st["data_stage"].dropna()
-        allowed = STAGE_VARS.get(stage.iloc[0] if len(stage) else None)
-        if allowed is not None:
-            grids = {v: z for v, z in grids.items() if v in allowed}
-            anoms = {v: z for v, z in anoms.items() if v in allowed}
-            anoms_n = {v: z for v, z in anoms_n.items() if v in allowed}
+        grids, anoms, anoms_n = stage_filter(stage.iloc[0] if len(stage) else None,
+                                             grids, anoms, anoms_n)
         # per-variable display rules, applied to the measured matrices and carried
         # through to the anomaly ones; `withheld` says what went and why, so the
         # app can tell the reader rather than silently omit it

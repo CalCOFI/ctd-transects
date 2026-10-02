@@ -33,6 +33,12 @@ THE RULES (all per section; a "section" is one line x one cruise)
                    and its `*_cruise_corr` sibling is drawn, the sibling is what the
                    selector falls back to (see cruise_fallbacks; the index carries
                    it per cruise as `fallback`).
+    5. stage     — a preliminary_without_bottle (CTD-only) cruise shows temperature
+                   alone (Rasmus, 2026-09-09: an uncorrected sensor reads as a real
+                   signal in the anomaly view). That covers the ctd-derived series
+                   too: sigma_theta_ave and spiciness0 need bottle-corrected
+                   salinity, and the release ships neither on those casts
+                   (ctd-transects#6). See STAGE_VARS / stage_filter.
 
 Matrices are the shard's `z[depth][station]` lists, None = no value.
 """
@@ -43,6 +49,16 @@ MIN_STATIONS = 3          # stations a section / variable needs ("less than 3" i
 MIN_STATION_FRACTION = 0.5  # ... and of this share of the section's stations
 MIN_INVARIANT_BINS = 6    # depth bins (10 m each = 50 m) before "constant" is judged
 CONSTANT_TOL = 1e-9       # std (or range) below this = identical
+
+# What a cruise at each processing tier may show; a stage absent here is
+# unrestricted. app.js availableVars() applies the same set in the browser.
+STAGE_VARS = {
+    "preliminary_without_bottle": frozenset({"temperature_ave"}),
+}
+
+# The calcofi_ctd-derived series this app draws (ctd-transects#5, #6). Named here
+# so the stage rule's test can say what must never reach a CTD-only cruise.
+DERIVED_VARS = frozenset({"sigma_theta_ave", "spiciness0"})
 
 STA_SUFFIX = "_sta_corr"
 CRUISE_SUFFIX = "_cruise_corr"
@@ -114,6 +130,19 @@ def apply_variable_rules(grids, *others, min_stations=MIN_STATIONS):
             withheld[v] = why
     keep = lambda d: {v: z for v, z in d.items() if v not in withheld}   # noqa: E731
     return (keep(grids), *[keep(o) for o in others], withheld)
+
+
+def stage_filter(stage, grids, *others):
+    """Keep only the variables a cruise at `stage` may show (rule 5).
+
+    grids, others : {var: z} dicts (measured, anomaly, anomaly n), filtered alike.
+    Returns (grids, *others). Unknown or unrestricted stages pass everything.
+    """
+    allowed = STAGE_VARS.get(stage)
+    if allowed is None:
+        return (grids, *others)
+    keep = lambda d: {v: z for v, z in d.items() if v in allowed}   # noqa: E731
+    return (keep(grids), *[keep(o) for o in others])
 
 
 def section_is_drawable(n_stations, grids, min_stations=MIN_STATIONS):

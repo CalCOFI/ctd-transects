@@ -50,7 +50,7 @@ async function getJSON(path) {
  * deeply held that a one-hue ramp actively misleads: its darkest step would land
  * on the WARM surface water, reading as cold to anyone who glances. The neutral
  * sits at the midpoint of the plotted range, so the section splits into a cool
- * half and a warm half.
+ * half and a warm half. Spice is the other diverging variable (see ZERO_CENTRED).
  *
  * No rainbow: jet and its relatives invent banding that is not in the data, which
  * is exactly the artefact a reader of a thermocline would misread as structure.
@@ -72,7 +72,17 @@ const RAMP_DIV_DARK = [
   [0.75, "#e34948"], [1.00, "#7d1b28"],
 ];
 
-const DIVERGING = new Set(["temperature_ave"]);
+const DIVERGING = new Set(["temperature_ave", "spiciness0"]);
+
+/* Spice (ctd-transects#6) is diverging for a different reason than temperature:
+ * its SIGN is the reading. Positive is spicy (warm, salty: the California
+ * Undercurrent's equatorial water), negative is minty (cool, fresh: the
+ * California Current's subarctic water), so the neutral is pinned to 0 in the
+ * measured view too, not to the middle of the plotted range. The ramp is the
+ * explicit one above (blue -> red), never Plotly's named "RdBu", which runs
+ * blue at the LOW end and would paint spicy water blue. */
+const ZERO_CENTRED = new Set(["spiciness0"]);
+const POLE_LABELS = { spiciness0: ["minty", "spicy"] };
 
 /* An ANOMALY is polarity, not magnitude — above or below normal — so it always
  * gets the diverging ramp with the neutral pinned to zero, whatever the variable.
@@ -378,6 +388,16 @@ function wireBaselineBadgeSync(plotEl) {
   plotEl.on("plotly_unhover", resetBaselineBadge);
 }
 
+/* The colour bar says what its poles MEAN where the sign is the reading (spice):
+ * "kg/m3 · − minty / + spicy", and in the anomaly view "mintier / spicier". */
+function colorbarTitle(varName, units, anom) {
+  const base = anom ? (units ? "Δ " + units : "Δ") : units;
+  const poles = POLE_LABELS[varName];
+  if (!poles) return base;
+  const [lo, hi] = anom ? poles.map((p) => p.replace(/y$/, "ier")) : poles;
+  return `${base} · − ${lo} / + ${hi}`;
+}
+
 function drawSection(shard, varName, maxDepth, mode, ruler) {
   const meta = state.index.variables.find((v) => v.var === varName);
   const anom = mode === "anomaly";
@@ -424,8 +444,9 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     zsmooth: "best",
     colorscale: scaleFor(varName, mode),
     // zero is NORMAL, and it must sit on the neutral wherever the data lands —
-    // otherwise a uniformly warm cruise paints its least-warm part blue
-    ...(anom ? { zmid: 0 } : {}),
+    // otherwise a uniformly warm cruise paints its least-warm part blue. Spice's
+    // zero is its spicy/minty boundary, so it is pinned in both views.
+    ...(anom || ZERO_CENTRED.has(varName) ? { zmid: 0 } : {}),
     /* connectgaps bridges a station that missed a depth bin, and it must stay ON
      * in both views.
      *
@@ -472,8 +493,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
       });
     }),
     colorbar: {
-      title: { text: anom ? (units ? "\u0394 " + units : "\u0394") : units,
-               side: "right" },
+      title: { text: colorbarTitle(varName, units, anom), side: "right" },
       thickness: 12, outlinewidth: 0, tickfont: { color: t.ink, size: 11 },
       titlefont: { color: t.ink, size: 11 },
     },

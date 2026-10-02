@@ -230,13 +230,28 @@
       Nothing here is a seamount in the shape the plot suggests.
     </p>
 
+    <h3>Density and spice</h3>
+    <p>
+      Potential density (σ<sub>θ</sub>) and spice come from the
+      <a href="https://calcofi.io/datasets/calcofi_ctd-derived/">CTD-derived
+      dataset ↗</a>, computed from the same casts. Density is the average of the
+      two sensor pairs, with a sensor the provider flags as questionable or bad
+      left out, never a single sensor. Spice (TEOS-10, at the surface pressure)
+      is positive in <strong>spicy</strong> water, warm and salty for its density
+      like the California Undercurrent, and negative in <strong>minty</strong>
+      water, cool and fresh like the California Current; its colour ramp is
+      centred on zero. A flagged temperature or salinity never enters either.
+      Both need bottle-corrected salinity, so neither is drawn on a CTD-only
+      cruise.
+    </p>
+
     <h3>Processing stage</h3>
     <p>
       Each cruise carries the stage of the CTD product it came from. The two
       preliminary tiers are different in a way that matters: a
       <strong>CTD-only</strong> cruise has not been through the bottle merge, so
       the bottle-corrected salinity, oxygen and chlorophyll <em>do not exist</em>
-      for it and the uncorrected sensor series are shown instead. A
+      for it, and only temperature is shown. A
       <strong>CTD&nbsp;&amp;&nbsp;bottle</strong> cruise has been merged but may
       still change after post-cruise calibration.
     </p>
@@ -283,7 +298,9 @@
     Data: <a href="https://calcofi.org/data/oceanographic-data/ctd-cast-files/">CalCOFI CTD Cast Files</a>
     (<a href="https://calcofi.io/datasets/calcofi_ctd-cast/">dataset page ↗</a>),
     bottle-corrected values from the
-    <a href="https://calcofi.io/datasets/calcofi_bottle/">Bottle dataset ↗</a>
+    <a href="https://calcofi.io/datasets/calcofi_bottle/">Bottle dataset ↗</a>,
+    density and spice from the
+    <a href="https://calcofi.io/datasets/calcofi_ctd-derived/">CTD-derived dataset ↗</a>
     · <a href="https://calcofi.io/workflows/ingest_calcofi_ctd-cast.html">ingest workflow</a>
     · <a href="https://github.com/CalCOFI/ctd-transects">source</a>
   </p>

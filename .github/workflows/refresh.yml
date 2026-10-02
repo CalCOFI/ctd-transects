@@ -60,6 +60,12 @@ jobs:
       - name: Self-test the display rules
         run: python3 scripts/test_display_rules.py
 
+      # the REAL build_sections.sql run against a tiny local release fixture: the
+      # ctd-derived join, the flag guard and the per-dataset anomaly, before the
+      # build touches a release
+      - name: Self-test the build SQL
+        run: python3 scripts/test_build_sections_sql.py
+
       - name: Rebuild transect data from the integrated DB
         run: |
           # git does not track empty directories, and public/data/ ships empty on

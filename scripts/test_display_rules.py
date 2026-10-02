@@ -212,6 +212,39 @@ class TestFallback(unittest.TestCase):
                          {"foo_sta_corr": "foo_cruise_corr"})
 
 
+class TestStage(unittest.TestCase):
+    """Rule 5: a CTD-only preliminary cruise shows temperature alone, so the
+    ctd-derived series (ctd-transects#5, #6) never reach one."""
+
+    def setUp(self):
+        self.vars = ["temperature_ave", "salinity_ave_corr", "sigma_theta_ave",
+                     "spiciness0", "fluorescence_v"]
+        self.grids = {v: grid(5, profile) for v in self.vars}
+
+    def test_derived_vars_are_named(self):
+        self.assertEqual(dr.DERIVED_VARS, {"sigma_theta_ave", "spiciness0"})
+
+    def test_without_bottle_is_temperature_only(self):
+        g, a = dr.stage_filter("preliminary_without_bottle", self.grids, dict(self.grids))
+        self.assertEqual(list(g), ["temperature_ave"])
+        self.assertEqual(list(a), ["temperature_ave"])
+        self.assertFalse(dr.DERIVED_VARS & set(g))
+
+    def test_final_and_with_bottle_keep_the_derived_vars(self):
+        for stage in ("final", "preliminary_with_bottle"):
+            (g,) = dr.stage_filter(stage, self.grids)
+            self.assertEqual(list(g), self.vars, stage)
+            self.assertTrue(dr.DERIVED_VARS <= set(g), stage)
+
+    def test_unknown_stage_is_unrestricted(self):
+        (g,) = dr.stage_filter(None, self.grids)
+        self.assertEqual(list(g), self.vars)
+
+    def test_inputs_are_not_mutated(self):
+        dr.stage_filter("preliminary_without_bottle", self.grids)
+        self.assertEqual(list(self.grids), self.vars)
+
+
 class TestRasmus20250422(unittest.TestCase):
     """The line 93.3 / 2025-04-3322 picture in one section."""
 

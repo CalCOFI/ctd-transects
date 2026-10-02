@@ -114,22 +114,30 @@ QUALIFY row_number() OVER (
 -- VARIABLE LIST: the corrected forms first, then the uncorrected sensor series.
 -- A preliminary_without_bottle cruise (sensor only, before the bottle merge) has NO
 -- *_corr / *_sta_corr values at all — the correction is fitted against bottle
--- samples. Carrying the raw series is what keeps salinity and oxygen plottable on
--- the most recent cruises, which are exactly the ones a user opens first.
-CREATE TEMP TABLE section AS
-SELECT c.line,
-       c.cruise_key,
-       c.sta,
-       o.measurement_type AS var,
-       (floor(o.depth_min_m / 10) * 10)::INTEGER AS depth_m,
-       ROUND(AVG(o.measurement_value), 4) AS value
+-- samples; build_sections.py (display_rules.STAGE_VARS) shows temperature alone there.
+--
+-- TWO DATASETS, ONE CAST. `calcofi_ctd-derived` (ctd-transects#5, #6) publishes
+-- per-bin `sigma_theta_ave` (the sensor-pair average by the provider's flags, which
+-- replaces the sensor-1-only `sigma_theta_1`) and `spiciness0` (TEOS-10 spice) in
+-- obs, at the depths ctd-cast publishes. Its rows carry ctd-cast's OWN sample_key
+-- (`calcofi_ctd-cast:cast:<id>`; measured on v2026.10.01: all 9,275 derived casts
+-- resolve to a ctd-cast `cast` row of `sample`, and `sample` has no ctd-derived rows),
+-- so they join `ctd_cast` above on sample_key exactly like ctd-cast's own rows —
+-- one cast, one position, one data_stage, whichever dataset the value came from.
+--
+-- `dataset_key` rides along so the anomaly below subtracts the climatology of the
+-- dataset the value came from.
+CREATE TEMP TABLE ctd_obs AS
+SELECT o.dataset_key,
+       o.sample_key,
+       o.measurement_type,
+       o.depth_min_m,
+       o.measurement_value,
+       -- quality flags: CTD 8 = questionable, 9 = bad/missing (1/2 are sensor-selection
+       -- hints, not grades). NULL-safe. Same predicate as calcofi4r::cc_qual_ok_sql().
+       COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') IN ('8', '9'), FALSE) AS flagged
 FROM __TBL:obs__ o
-JOIN ctd_cast c USING (sample_key)
-WHERE o.dataset_key = 'calcofi_ctd-cast'
-  AND o.measurement_value IS NOT NULL
-  -- quality flags: CTD 8 = questionable, 9 = bad/missing (1/2 are sensor-selection
-  -- hints, not grades). NULL-safe. Same predicate as calcofi4r::cc_qual_ok_sql().
-  AND COALESCE(regexp_replace(o.measurement_qual, '\.0+$', '') NOT IN ('8', '9'), TRUE)
+WHERE o.dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
   AND o.depth_min_m IS NOT NULL
   AND o.depth_min_m < 510
   AND o.measurement_type IN (
@@ -141,8 +149,54 @@ WHERE o.dataset_key = 'calcofi_ctd-cast'
     'est_chlorophyll_a_cruise_corr',
     'est_nitrate_sta_corr',
     'est_nitrate_cruise_corr',
+    'sigma_theta_ave',
+    'spiciness0',
+    'fluorescence_v',
+    -- not drawn: the per-sensor inputs of sigma_theta_ave, read only for the flag
+    -- guard below (ctd-transects#5: no fallback to sensor 1)
     'sigma_theta_1',
-    'fluorescence_v')
+    'sigma_theta_2');
+
+-- ── a flagged input never reaches a derived value ───────────────────────────
+-- The provider flags its inputs, not our derivations: ctd-derived rows carry no
+-- measurement_qual. calcofi4db builds them after dropping 8/9 (spiciness0 from
+-- temperature_ave + salinity_ave_corr; sigma_theta_ave = the sensor pair with a
+-- flagged sensor dropped, so it exists only while one sensor is good), and the
+-- ingest's flag-audit chunk asserts that. This re-asserts it on the bytes we draw:
+-- a derived value at a cast and depth where its inputs are flagged is dropped, and
+-- the count is reported in the summary below (0 on v2026.10.01; non-zero means the
+-- release broke the ingest's own rule and should be raised, not just filtered).
+CREATE TEMP TABLE derived_blocked AS
+SELECT sample_key, depth_min_m, 'spiciness0' AS var
+FROM ctd_obs
+WHERE dataset_key = 'calcofi_ctd-cast' AND flagged
+  AND measurement_type IN ('temperature_ave', 'salinity_ave_corr')
+UNION
+SELECT sample_key, depth_min_m, 'sigma_theta_ave' AS var
+FROM ctd_obs
+WHERE dataset_key = 'calcofi_ctd-cast' AND flagged
+  AND measurement_type IN ('sigma_theta_1', 'sigma_theta_2')
+GROUP BY sample_key, depth_min_m
+HAVING count(DISTINCT measurement_type) = 2;
+
+CREATE TEMP TABLE section AS
+SELECT c.line,
+       c.cruise_key,
+       c.sta,
+       o.dataset_key,
+       o.measurement_type AS var,
+       (floor(o.depth_min_m / 10) * 10)::INTEGER AS depth_m,
+       ROUND(AVG(o.measurement_value), 4) AS value
+FROM ctd_obs o
+JOIN ctd_cast c USING (sample_key)
+WHERE o.measurement_value IS NOT NULL
+  AND NOT o.flagged
+  AND o.measurement_type NOT IN ('sigma_theta_1', 'sigma_theta_2')
+  AND NOT EXISTS (SELECT 1 FROM derived_blocked b
+                  WHERE b.sample_key  = o.sample_key
+                    AND b.depth_min_m = o.depth_min_m
+                    AND b.var         = o.measurement_type
+                    AND o.dataset_key = 'calcofi_ctd-derived')
 GROUP BY ALL;
 
 -- ── cast-level metadata, one row per (line, cruise, station) ─────────────────
@@ -162,15 +216,20 @@ WHERE c.sta IN (SELECT DISTINCT sta FROM section
 -- ── climatology: the baseline every anomaly is a departure from ──────────────
 -- Read from the release, never recomputed here (see the header). `depth_bin` is
 -- the same 10 m floor bin as `section.depth_m`, so the join below is exact.
+-- One table for both datasets: build_climatology() runs over every env dataset, so
+-- sigma_theta_ave and spiciness0 have their own rows under dataset_key =
+-- 'calcofi_ctd-derived' (v2026.10.01: 21,750 cells each over 81 stations, >= 5
+-- cruises), built from the same flag-filtered values drawn here.
 CREATE TEMP TABLE climatology AS
-SELECT site_key,
+SELECT dataset_key,
+       site_key,
        grid_key,
        month            AS mon,
        depth_bin        AS depth_m,
        measurement_type AS var,
        clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max
 FROM __TBL:climatology__
-WHERE dataset_key = 'calcofi_ctd-cast'
+WHERE dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
   AND measurement_type IN (SELECT DISTINCT var FROM section);
 
 -- ── the anomaly ──────────────────────────────────────────────────────────────
@@ -199,7 +258,8 @@ FROM section s
 JOIN section_station ss
   ON ss.line = s.line AND ss.cruise_key = s.cruise_key AND ss.sta = s.sta
 JOIN climatology cl
-  ON cl.site_key = ss.site_key
+  ON cl.dataset_key = s.dataset_key
+ AND cl.site_key = ss.site_key
  AND cl.mon      = month(ss.datetime)
  AND cl.depth_m  = s.depth_m
  AND cl.var      = s.var;
@@ -246,6 +306,13 @@ SELECT '__RELEASE__'                                         AS release,
        (SELECT count(DISTINCT cruise_key) FROM section)      AS n_cruises,
        (SELECT count(*) FROM climatology)                    AS n_clim_cells,
        (SELECT count(*) FROM section_anomaly)                AS n_anomalies,
+       -- derived values dropped because an input was flagged: 0 unless the release
+       -- broke the ctd-derived ingest's own flag rule (see derived_blocked)
+       (SELECT count(*) FROM ctd_obs o
+         WHERE o.dataset_key = 'calcofi_ctd-derived'
+           AND EXISTS (SELECT 1 FROM derived_blocked b
+                       WHERE b.sample_key = o.sample_key AND b.depth_min_m = o.depth_min_m
+                         AND b.var = o.measurement_type))   AS n_derived_blocked,
        -- what fraction of section values HAVE a baseline; a sharp drop here means
        -- either the baseline window missed the release's coverage or a station is
        -- newly sampled, and either way the anomaly view will be mostly blank

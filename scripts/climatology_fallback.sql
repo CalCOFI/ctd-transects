@@ -9,8 +9,8 @@
 -- (raised from 3 — Rasmus Swalethorp, 2026-09-09) —
 -- the station being sample.site_key (the real line/station), not the grid cell, since
 -- calcofi4db 4.8.0; grid_key rides along as the station's modal cell.
--- Restricted to the CTD dataset here because that is the only one this app reads; the
--- release table carries every env dataset. Delete this file once every release this app
+-- Restricted to the two CTD datasets this app reads (ctd-cast, and ctd-derived where the
+-- release has it); the release table carries every env dataset. Delete this file once every release this app
 -- can be pointed at ships the table.
 SELECT o.dataset_key,
        s.site_key,
@@ -27,7 +27,7 @@ SELECT o.dataset_key,
 FROM __TBL:obs__ o
 JOIN __TBL:sample__ s USING (sample_key)
 WHERE o.realm = 'env'
-  AND o.dataset_key = 'calcofi_ctd-cast'
+  AND o.dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
   AND s.site_key IS NOT NULL AND o.datetime IS NOT NULL
   AND o.depth_min_m IS NOT NULL AND o.depth_min_m >= 0 AND o.depth_min_m < 510
   AND o.measurement_value IS NOT NULL AND isfinite(o.measurement_value)

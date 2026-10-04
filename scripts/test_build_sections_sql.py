@@ -58,7 +58,10 @@ CREATE TABLE grid AS
 SELECT * FROM (VALUES
   ('st30-ln93.3', 30.0, 93.3, 'inshore',  ST_Point(-117.40, 32.85)),
   ('st40-ln93.3', 40.0, 93.3, 'inshore',  ST_Point(-117.55, 32.80)),
-  ('st50-ln93.3', 50.0, 93.3, 'offshore', ST_Point(-117.70, 32.75)))
+  ('st50-ln93.3', 50.0, 93.3, 'offshore', ST_Point(-117.70, 32.75)),
+  -- v2026.10.04: SCCOOS inshore stations are one-cell "lines" of their own
+  ('st26.4-ln93.4', 26.4, 93.4, 'inshore', ST_Point(-117.33, 32.90)),
+  ('st30.1-ln88.5', 30.1, 88.5, 'inshore', ST_Point(-117.40, 33.30)))
   t(grid_key, station, line, shore, geom_ctr);
 
 CREATE TABLE sample AS
@@ -67,7 +70,12 @@ SELECT 'calcofi_ctd-cast:cast:2504_' || lpad(CAST(CAST(station AS INT) AS VARCHA
        grid_key, '093.3 ' || lpad(printf('%.1f', station), 5, '0') AS site_key,
        32.8 AS latitude, -117.5 AS longitude,
        TIMESTAMP '2025-04-10 12:00:00' AS datetime, 'final' AS data_stage
-FROM grid;
+FROM grid WHERE line = 93.3
+UNION ALL SELECT * FROM (VALUES
+  ('calcofi_ctd-cast:cast:2504_901d', 'calcofi_ctd-cast', 'cast', '2025-04-3322',
+   'st26.4-ln93.4', '093.4 026.4', 32.9, -117.33, TIMESTAMP '2025-04-10 06:00:00', 'final'),
+  ('calcofi_ctd-cast:cast:2504_902d', 'calcofi_ctd-cast', 'cast', '2025-04-3322',
+   'st30.1-ln88.5', '088.5 030.1', 33.3, -117.40, TIMESTAMP '2025-04-10 03:00:00', 'final'));
 
 -- (station, depth, type, value, qual)
 CREATE TABLE obs_rows AS SELECT * FROM (VALUES
@@ -103,7 +111,10 @@ CREATE TABLE obs_rows AS SELECT * FROM (VALUES
   ('calcofi_ctd-derived', 40, 1.0,  'spiciness0',     -0.10, NULL),
   ('calcofi_ctd-derived', 40, 10.0, 'spiciness0',     -0.15, NULL),
   ('calcofi_ctd-derived', 50, 1.0,  'spiciness0',     -0.30, NULL),
-  ('calcofi_ctd-derived', 50, 10.0, 'spiciness0',      5.00, NULL))   -- salinity flagged
+  ('calcofi_ctd-derived', 50, 10.0, 'spiciness0',      5.00, NULL),   -- salinity flagged
+  -- 901 = SCCOOS 93.4 26.4 (drawn on line 93.3), 902 = 88.5 30.1 (on no line)
+  ('calcofi_ctd-cast', 901, 1.0,  'temperature_ave',   15.8, NULL),
+  ('calcofi_ctd-cast', 902, 1.0,  'temperature_ave',   16.2, NULL))
   t(dataset_key, sta, depth_min_m, measurement_type, measurement_value, measurement_qual);
 
 CREATE TABLE obs AS
@@ -241,6 +252,25 @@ class BuildSectionsSQL(unittest.TestCase):
             {"var": "spiciness0",      "sta": 30.0, "depth_m": 0, "anomaly": 0.2},
             {"var": "temperature_ave", "sta": 30.0, "depth_m": 0, "anomaly": 1.0},
         ])
+
+    def test_section_line_is_the_stations_own_line_not_the_cell(self):
+        # v2026.10.04: 93.4 26.4 is a one-cell line of its own; keyed on the cell it
+        # would leave line 93.3, keyed on its site_key it is 0.1 off 93.3 and joins it
+        r = rows(self.d, "SELECT line::DOUBLE AS line, sta, grid_key FROM 'public/data/_stations.parquet' "
+                         "ORDER BY sta")
+        self.assertEqual([(x["line"], x["sta"]) for x in r],
+                         [(93.3, 26.4), (93.3, 30.0), (93.3, 40.0), (93.3, 50.0)])
+        self.assertEqual(r[0]["grid_key"], "st26.4-ln93.4")
+        self.assertEqual(self.section("var = 'temperature_ave' AND sta = 26.4"),
+                         [{"dataset_key": CAST, "var": "temperature_ave", "sta": 26.4,
+                           "depth_m": 0, "value": 15.8}])
+
+    def test_station_off_every_line_is_not_drawn(self):
+        # 88.5 30.1 is 1.5 line units from line 90: on no section, not a one-cell
+        # line 88.5 section either
+        self.assertEqual(self.section("sta = 30.1"), [])
+        self.assertEqual({r["line"] for r in rows(
+            self.d, "SELECT DISTINCT line::DOUBLE AS line FROM 'public/data/_sections.parquet'")}, {93.3})
 
     def test_variable_labels_cover_the_derived_types(self):
         v = {r["var"] for r in rows(self.d, "SELECT var FROM 'public/data/_variables.parquet'")}

@@ -66,6 +66,11 @@ jobs:
       - name: Self-test the build SQL
         run: python3 scripts/test_build_sections_sql.py
 
+      # a section station's place on the comparable ruler comes from its own
+      # station number, not the grid cell it falls in (v2026.10.04 grid)
+      - name: Self-test the station ruler
+        run: python3 scripts/test_station_ruler.py
+
       - name: Rebuild transect data from the integrated DB
         run: |
           # git does not track empty directories, and public/data/ ships empty on

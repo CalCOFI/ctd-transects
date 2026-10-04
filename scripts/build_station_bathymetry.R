@@ -3,7 +3,8 @@
 #   Rscript scripts/build_station_bathymetry.R
 #
 # Writes TWO COMMITTED INPUTS to the CI build (not CI outputs). Run by hand; they
-# are only stale if the CalCOFI grid itself changes, which it does not.
+# are only stale if the CalCOFI grid itself changes — release v2026.10.04 did (one
+# cell per official station; re-run 2026-10-04), so re-run on any grid change.
 #
 #   metadata/station_bathymetry.csv  one row per grid station
 #   metadata/line_bathymetry.csv     the seafloor sampled every 500 m ALONG each
@@ -68,7 +69,9 @@ d_out <- d_grid |>
   arrange(line, sta) |>
   group_by(line) |>
   mutate(
-    line_dist_km = c(0, cumsum(distHaversine(
+    # a one-cell line (v2026.10.04's SCCOOS stations: 93.4, 86.8, 85.4, …) has no
+    # hop to measure, and distHaversine() fails on the empty matrices
+    line_dist_km = if (n() < 2) 0 else c(0, cumsum(distHaversine(
       cbind(head(lon, -1), head(lat, -1)),
       cbind(tail(lon, -1), tail(lat, -1))) / 1000)) |> round(3)) |>
   ungroup() |>
@@ -79,12 +82,32 @@ d_out <- d_grid |>
 # handing the stations' own `line_dist_km` in as the ruler keeps the profile
 # anchored exactly at every station, which is what the app's per-cruise warp
 # (build_sections.py: floor_profile) then stretches between
+#
+# INSHORE OF THE FIRST GRID STATION. From v2026.10.04 a section can hold a station
+# inshore of its line's first grid cell: SCCOOS 93.4 26.4 draws on line 93.3, whose
+# first cell is 26.7; 86.8 32.5 on 86.7 (first cell 33). build_sections.py places
+# such a station at a NEGATIVE line_dist_km (station_ruler(): by station number),
+# so the profile is extended inshore to the most-inshore station any section draws,
+# at a point extrapolated along the line's first grid hop (+proj=calcofi is
+# equidistant along a line, and a line is straight over these few km).
+d_sec_sta <- arrow::read_parquet("public/data/_stations.parquet") |>
+  distinct(line, sta)
 d_line <- d_out |>
   group_by(line) |>
   group_modify(~ {
     if (nrow(.x) < 2) return(tibble(line_dist_km = numeric(0),
                                     bathy_m      = numeric(0)))
     .x <- arrange(.x, sta)
+    sta_in <- suppressWarnings(min(d_sec_sta$sta[d_sec_sta$line == .y$line]))
+    if (is.finite(sta_in) && sta_in < .x$sta[1]) {
+      f <- (.x$sta[1] - sta_in) / (.x$sta[2] - .x$sta[1])
+      .x <- bind_rows(
+        tibble(sta = sta_in,
+               lon = .x$lon[1] - f * (.x$lon[2] - .x$lon[1]),
+               lat = .x$lat[1] - f * (.x$lat[2] - .x$lat[1]),
+               line_dist_km = -f * (.x$line_dist_km[2] - .x$line_dist_km[1])),
+        .x)
+    }
     cc_transect_bathy(
       .x$lon, .x$lat, dist_km = .x$line_dist_km,
       interval_m = STEP_M, bathy = bathy) |>
@@ -110,10 +133,10 @@ stopifnot(
 
 # the sampling is only as good as its spacing, and a silent regression to a
 # coarser profile is exactly the bug this file was rewritten to fix
-plotted_lines <- d_out |>
-  filter(grid_key %in% unique(d_sec$grid_key)) |>
-  distinct(line) |>
-  pull(line)
+# the SECTION lines, not the lines of the cells the stations fall in: from
+# v2026.10.04 a SCCOOS station (93.4 26.4, a one-cell line of its own) draws on
+# line 93.3 (build_sections.sql), and a one-cell line has no profile to check
+plotted_lines <- sort(unique(d_sec$line))
 gaps <- d_line |>
   filter(line %in% plotted_lines) |>
   group_by(line) |>

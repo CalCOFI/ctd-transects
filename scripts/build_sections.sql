@@ -54,8 +54,10 @@ INSTALL spatial; LOAD spatial;
 -- only guaranteed to answer for the promoted and consolidated versions.
 
 -- ── the CalCOFI grid: line/station geometry ──────────────────────────────────
--- 218 rows. `geom_ctr` is the station centre; the app draws these on the map and
--- uses the lon/lat to compute along-transect distance.
+-- One cell per station (225 rows from v2026.10.04: one Voronoi cell per official
+-- station, plus the historical cells). `geom_ctr` is the station's nominal
+-- position; the app draws these on the map and uses the lon/lat to compute
+-- along-transect distance.
 CREATE TEMP TABLE station AS
 SELECT grid_key,
        line,
@@ -73,29 +75,46 @@ WHERE line IS NOT NULL AND station IS NOT NULL;
 -- and 88.5/30.1: 3.7 occupations per cruise), and until 2026-09-09 this partition
 -- was (cruise_key, grid_key): 1,595 of 9,637 occupations (16.6 %; 26 % on line 90
 -- since 2004) never drew, and which one drew was whichever the ship reached
--- first. The station is parsed from site_key; the cell still supplies the line
--- (a station logged as 93.4 sits 2 km off line 93.3 and belongs to it), the
--- shore class and the nominal position. A station whose own line is more than
--- 0.5 units from the cell's line (88.5/30.1 inside st30-ln90) is not on this
--- line and is left out rather than drawn 17 km from where it was.
+-- first. Both the station AND the line are parsed from site_key; the cell
+-- supplies only the shore class and the nominal position.
 --
+-- THE SECTION LINE IS THE STATION'S OWN LINE, NOT THE CELL'S (2026-10-04). Until
+-- v2026.10.01 the cell supplied the line, which worked while every inshore
+-- station fell in a cell of a real line. From v2026.10.04 the grid has one cell
+-- per official station, and the SCCOOS inshore stations are cells on "lines" of
+-- their own — 93.4 (26.4), 86.8 (32.5), 85.4, 88.5, 81.7, 81.8, 91.7, one cell
+-- each — so keying on the cell would have pulled 93.4/26.4 out of every line 93.3
+-- section and 86.8/32.5 out of line 86.7. A section line is a grid line that
+-- carries at least 3 cells (MIN_STATIONS: a line with fewer can never be drawn),
+-- and a station belongs to the one within 0.5 line units of its own line: a
+-- station logged as 93.4 sits 2 km off line 93.3 and belongs to it; 88.5/30.1
+-- (1.5 units from line 90) is on no line and is left out rather than drawn 17 km
+-- from where it was, exactly as before. Real lines are >= 3.3 units apart (50 and
+-- 55 are the closest historical pair, 5 apart), so at most one line matches.
+CREATE TEMP TABLE section_line AS
+SELECT line FROM station GROUP BY line HAVING count(*) >= 3;
+
 -- `obs` is already effectively single-direction (the ingest's ctd_thin picks one
 -- physical direction per cast, downcast preferred); the QUALIFY keeps that
 -- explicit — one row per (cruise, line, station), the downcast first.
 CREATE TEMP TABLE ctd_cast AS
 SELECT s.sample_key, s.cruise_key, s.grid_key, s.site_key,
-       g.line,
-       TRY_CAST(split_part(s.site_key, ' ', 2) AS DOUBLE) AS sta,
+       l.line,
+       s.site_line,
+       s.sta,
        g.lon AS grid_lon, g.lat AS grid_lat,
        s.latitude, s.longitude, s.datetime, s.data_stage
-FROM __TBL:sample__ s
+FROM (SELECT *,
+             TRY_CAST(split_part(site_key, ' ', 1) AS DOUBLE) AS site_line,
+             TRY_CAST(split_part(site_key, ' ', 2) AS DOUBLE) AS sta
+      FROM __TBL:sample__
+      WHERE dataset_key = 'calcofi_ctd-cast'
+        AND sample_type = 'cast'
+        AND site_key IS NOT NULL) s
 JOIN station g USING (grid_key)
-WHERE s.dataset_key = 'calcofi_ctd-cast'
-  AND s.sample_type = 'cast'
-  AND s.site_key IS NOT NULL
-  AND abs(TRY_CAST(split_part(s.site_key, ' ', 1) AS DOUBLE) - g.line) <= 0.5
+JOIN section_line l ON abs(s.site_line - l.line) <= 0.5
 QUALIFY row_number() OVER (
-  PARTITION BY s.cruise_key, g.line, TRY_CAST(split_part(s.site_key, ' ', 2) AS DOUBLE)
+  PARTITION BY s.cruise_key, l.line, s.sta
   ORDER BY right(s.sample_key, 1) = 'd' DESC, s.datetime) = 1;
 
 -- ── the section values ───────────────────────────────────────────────────────

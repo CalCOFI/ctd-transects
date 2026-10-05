@@ -577,8 +577,11 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 
   // shared with thinStationTicks below: the axis range it thins against must
   // be the SAME range the axis actually renders with, not recomputed
+  // the comparable ruler starts at the line's most-inshore GRID station; a
+  // station inshore of it (SCCOOS 93.4 26.4 on line 93.3, 2026-10-04) sits at
+  // a small negative distance and must not be clipped off the coast end
   const xRange = useLine
-    ? [lineExtent(shard.line) ?? Math.max(...x), 0]
+    ? [lineExtent(shard.line) ?? Math.max(...x), Math.min(0, ...x)]
     : [Math.max(...x), Math.min(...x)];
   const ticks = thinStationTicks(x, shard.stations, xRange);
 

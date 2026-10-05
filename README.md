@@ -25,6 +25,14 @@ four stations occupied every cruise (the "station 30" cell on line 90 holds 90.3
 cell — 16.6 % of CTD occupations, 26 % on line 90 since 2004, never drew. They are
 their own columns now; the x-axis is distance, so they sit where they were.
 
+The **line** is the station's own too. From release v2026.10.04 the grid has one cell
+per official station, and the SCCOOS inshore stations are cells on "lines" of their
+own (93.4 26.4, 86.8 32.5, 85.4, 88.5, 81.7, 81.8, 91.7 — one cell each). A section
+line is a grid line with at least 3 cells, and a station belongs to the one within 0.5
+units of the line in its `site_key`: 93.4 26.4 draws on line 93.3, 86.8 32.5 on 86.7,
+88.5 30.1 (1.5 units off line 90) on none. Its place on the comparable ruler comes from
+its station number (`station_ruler()`), not from the cell.
+
 It is drawn **offshore on the left, the coast on the right**, matching the map
 beside it (a CalCOFI line runs west-south-west from the coast) and the CalCOFI
 Explorer's Sections lens. The x-axis carries **both rulers — distance below,
@@ -98,8 +106,10 @@ manual dispatch, and on a `db-release` `repository_dispatch` fired by
 
 `metadata/station_bathymetry.csv` and `metadata/line_bathymetry.csv` are generated
 **by hand** with `scripts/build_station_bathymetry.R`. They only go stale if the
-CalCOFI grid changes, which it does not, so CI does not carry a raster or a GDAL
-stack to recompute numbers that never move.
+CalCOFI grid changes — rare enough that CI does not carry a raster or a GDAL stack to
+recompute them, but it does happen: release v2026.10.04 rebuilt the grid (one cell per
+official station) and they were re-run against it. Re-run them whenever a release
+changes `grid`.
 
 `line_bathymetry.csv` samples the seafloor every **500 m along** each line rather
 than once per station, via `calcofi4r::cc_transect_bathy()` — the same function

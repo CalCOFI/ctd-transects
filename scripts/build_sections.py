@@ -149,6 +149,45 @@ def fmt_line(v):
     return f"{v:g}"
 
 
+def interp_linear(xs, ys, x, extrapolate=False):
+    """Piecewise-linear y at x through the (sorted, ascending) knots xs/ys.
+
+    Outside [xs[0], xs[-1]] it extends the end segment when `extrapolate`, else
+    returns None. None also when there are fewer than 2 knots.
+    """
+    if len(xs) < 2:
+        return None
+    if x < xs[0] or x > xs[-1]:
+        if not extrapolate:
+            return None
+        i = 0 if x < xs[0] else len(xs) - 2
+    else:
+        i = 0
+        while i < len(xs) - 2 and x > xs[i + 1]:
+            i += 1
+    span = xs[i + 1] - xs[i]
+    f = 0.0 if span <= 0 else (x - xs[i]) / span
+    return ys[i] + f * (ys[i + 1] - ys[i])
+
+
+def station_ruler(line_grid, sta):
+    """A station's `line_dist_km` on its section line, from its station NUMBER.
+
+    `line_grid` is the line's rows of metadata/station_bathymetry.csv (sta,
+    line_dist_km), one per grid cell. Until 2026-10-04 a section station took the
+    ruler of the grid cell it fell in, so 90.28 and 90.30 (one cell then) sat on
+    the same x, and from v2026.10.04 a SCCOOS station on its own one-cell "line"
+    (93.4 26.4, drawn on line 93.3) would have taken that line's ruler: 0 km.
+    `+proj=calcofi` is equidistant along a line (7.386 km per station unit), so
+    the station number interpolates the ruler exactly between grid stations and
+    extends it past the ends.
+    """
+    g = line_grid.dropna(subset=["line_dist_km"]).sort_values("sta")
+    v = interp_linear(g["sta"].tolist(), g["line_dist_km"].tolist(), float(sta),
+                      extrapolate=True)
+    return None if v is None else round(v, 3)
+
+
 def floor_profile(line_floor, knots_along, knots_x):
     """Place the dense along-line seafloor on this section's x-axis.
 
@@ -205,15 +244,44 @@ def main():
     # matrices are filled in one pass per (line, cruise)
     anm_by_sec = {k: v for k, v in anm.groupby(["line_s", "cruise_key"], sort=False)}
 
-    sta = sta.merge(bathy[["grid_key", "bathy_m", "line_dist_km"]],
-                    on="grid_key", how="left")
-
     # the seafloor sampled every 500 m along each line, keyed by distance from the
     # line's most-inshore grid station
     floor = pd.read_csv("metadata/line_bathymetry.csv")
     floor["line_s"] = floor["line"].map(fmt_line)
     floor_by_line = {k: v.sort_values("line_dist_km")
                      for k, v in floor.groupby("line_s")}
+
+    # each station's place on its SECTION line's ruler, and the seafloor there,
+    # from its own station number (station_ruler) — never from the grid cell it
+    # falls in, whose line may not be the section's (93.4 26.4 on line 93.3)
+    bathy["line_s"] = bathy["line"].map(fmt_line)
+    grid_by_line = {k: v for k, v in bathy.groupby("line_s")}
+    sta["line_dist_km"] = pd.to_numeric(pd.Series([
+        station_ruler(grid_by_line[ls], s) if ls in grid_by_line else None
+        for ls, s in zip(sta["line_s"], sta["sta"])], index=sta.index, dtype="object"))
+
+    # the depth under the station is read off the same profile the app draws (so
+    # the hover and the silhouette agree); where the profile does not reach, the
+    # GEBCO depth at the station's own grid cell centre
+    cell_bathy = dict(zip(bathy["grid_key"], bathy["bathy_m"]))
+    floor_knots = {k: (v.dropna(subset=["bathy_m"])["line_dist_km"].tolist(),
+                       v.dropna(subset=["bathy_m"])["bathy_m"].tolist())
+                   for k, v in floor_by_line.items()}
+
+    def seafloor(ls, d, grid_key):
+        v = None
+        if ls in floor_knots and pd.notna(d):
+            xs, ys = floor_knots[ls]
+            if xs:
+                # the profile and the ruler are rounded separately (2 vs 3 dp)
+                d = min(max(float(d), xs[0]), xs[-1]) if xs[0] - 0.01 <= d <= xs[-1] + 0.01 else d
+            v = interp_linear(xs, ys, float(d))
+        if v is None:
+            v = cell_bathy.get(grid_key)
+        return None if v is None or pd.isna(v) else round(float(v), 1)
+
+    sta["bathy_m"] = [seafloor(ls, d, gk) for ls, d, gk
+                      in zip(sta["line_s"], sta["line_dist_km"], sta["grid_key"])]
 
     ship = dict(zip(cru["cruise_key"], cru["ship_name"].fillna("")))
 
@@ -381,9 +449,22 @@ def main():
     # Full extent of each line's ruler, so the comparable x-axis is fixed for the
     # line rather than derived from whichever cruise is on screen — the axis has to
     # stay put when you change cruise or the comparison is not one.
+    #
+    # The extent is the farthest station any section on the line reaches, not the
+    # end of the seafloor profile. The profile runs to the line's last GRID cell,
+    # which on lines 60-90 is a historical cell out at station 200 that no CTD
+    # cast has reached: once the bathymetry crop covered those cells (re-run for
+    # the v2026.10.04 grid) line 90's axis would have been 1,274 km for sections
+    # that end at 683 km (1,026 km before, already a third empty). The floor is
+    # trimmed to the same range.
+    sec_reach = sta.groupby("line_s")["line_dist_km"].agg(["min", "max"])
     line_extent = {}
     line_floor = {}
     for line_s, g in floor.groupby("line_s"):
+        if line_s in sec_reach.index and pd.notna(sec_reach.loc[line_s, "max"]):
+            lo = min(0.0, float(sec_reach.loc[line_s, "min"]))
+            hi = float(sec_reach.loc[line_s, "max"])
+            g = g[(g["line_dist_km"] >= lo - 0.5) & (g["line_dist_km"] <= hi + 0.5)]
         line_extent[line_s] = round(float(g["line_dist_km"].max()), 2)
         # The seafloor in the line's OWN coordinate, carried once per line rather
         # than per shard. Each shard's `floor` is this profile warped onto that

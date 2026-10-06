@@ -329,7 +329,7 @@ function noBaselineNote(shard, zv, za) {
     .map((s) => s.sta);
   if (!sta.length) return "";
   return ` Station${sta.length > 1 ? "s" : ""} ${sta.join(", ")} ` +
-    `ha${sta.length > 1 ? "ve" : "s"} no baseline for this month and ` +
+    `ha${sta.length > 1 ? "ve" : "s"} no baseline for this cruise's month and ` +
     `${sta.length > 1 ? "are" : "is"} not drawn.`;
 }
 
@@ -416,7 +416,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 
   /* A station whose whole column is empty in this view is left out of the
    * heatmap and the contours. In the anomaly view that is a station with no
-   * baseline for this calendar month (station 27.7 on an August cruise: its
+   * baseline for this cruise's month (station 27.7 on an August cruise: its
    * climatology has July only). connectgaps below bridges a depth a cast has no
    * scan at; across a WHOLE empty column it painted the neighbour's field onto a
    * station that has none (ctd-transects#11). The station keeps its tick, and
@@ -569,7 +569,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     hovertemplate: shard.stations.map(
       (s, j) => `Station ${s.sta}<br>${s.dist_km.toFixed(0)} km offshore` +
              (s.bathy_m != null ? `<br>Seafloor ${s.bathy_m.toFixed(0)} m` : "") +
-             (drawn.has(j) ? "" : anom ? "<br>no baseline this month — not drawn"
+             (drawn.has(j) ? "" : anom ? "<br>no baseline this cruise month — not drawn"
                                       : "<br>no data — not drawn") +
              "<extra></extra>"),
     showlegend: false,
@@ -821,7 +821,7 @@ async function render(sel) {
     const b = state.index.baseline;
     anomNote.textContent =
       `Departure from the ${b.yr_min}–${b.yr_max} mean for this station, depth ` +
-      `and calendar month — the release's own climatology table (${b.n_cruises} ` +
+      `and cruise month — the release's own climatology table (${b.n_cruises} ` +
       `cruises, at least ${b.min_cruises} cruises per cell). ${pctAnom}% of this section's measurements have ` +
       `such a baseline; the rest are drawn from neighbouring values and should ` +
       `not be read closely.` + noBaselineNote(shard, zv, za) + ` See Methods below.`;

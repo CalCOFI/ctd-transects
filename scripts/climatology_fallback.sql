@@ -4,18 +4,21 @@
 -- resolve_release.py substitutes this SELECT, parenthesised, wherever build_sections.sql
 -- says __TBL:climatology__ and the catalog has no such table — and says so on stderr.
 -- It is the SAME definition as calcofi4db::build_climatology(), which is what the release
--- runs: a plain mean per dataset x station x calendar month x 10 m floor depth bin x
+-- runs: a plain mean per dataset x station x cruise month x 10 m floor depth bin x
 -- measurement type over 1993-2013, kept where at least 5 distinct cruises contribute
 -- (raised from 3 — Rasmus Swalethorp, 2026-09-09) —
 -- the station being sample.site_key (the real line/station), not the grid cell, since
 -- calcofi4db 4.8.0; grid_key rides along as the station's modal cell.
+-- The month is the cruise's designated month (MM of cruise_key YYYY-MM-NODC), not the
+-- cast's calendar month: a cast occupied on the last day of June for a July cruise
+-- belongs to the July baseline. The year window stays on year(datetime).
 -- Restricted to the two CTD datasets this app reads (ctd-cast, and ctd-derived where the
 -- release has it); the release table carries every env dataset. Delete this file once every release this app
 -- can be pointed at ships the table.
 SELECT o.dataset_key,
        s.site_key,
        mode(o.grid_key)                                     AS grid_key,
-       month(o.datetime)::TINYINT                           AS month,
+       TRY_CAST(substr(o.cruise_key, 6, 2) AS TINYINT)      AS month,
        (floor(o.depth_min_m / 10) * 10)::INTEGER            AS depth_bin,
        o.measurement_type,
        avg(o.measurement_value)                             AS clim_mean,

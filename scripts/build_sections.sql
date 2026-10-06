@@ -26,7 +26,7 @@ INSTALL spatial; LOAD spatial;
 -- ── the climatological baseline ──────────────────────────────────────────────
 -- The baseline is the release's own `climatology` table (calcofi4db::
 -- build_climatology(), run once when the release is cut): a plain mean per
--- dataset x station x calendar month x 10 m floor depth bin x measurement type
+-- dataset x station x cruise month x 10 m floor depth bin x measurement type
 -- over 1993-2013, kept where at least 5 distinct cruises contribute, the window
 -- stamped on every row (clim_yr_min / clim_yr_max). This app, the CalCOFI
 -- Explorer's Sections lens and calcofi4r::cc_climatology() all subtract that one
@@ -253,7 +253,13 @@ WHERE dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
 
 -- ── the anomaly ──────────────────────────────────────────────────────────────
 -- value - clim_mean, matched on the STATION (site_key, since the release's
--- climatology moved to that grain, calcofi4db 4.8.0), calendar month and depth bin.
+-- climatology moved to that grain, calcofi4db 4.8.0), the CRUISE's month and depth bin.
+--
+-- The month is the cruise's designated month (the MM of cruise_key YYYY-MM-NODC),
+-- never the month the cast was occupied in: the cruise's month is the season the
+-- cruise samples. Matching on month(datetime) blanked cruise 2026-07-3322's line
+-- 93.3 inshore stations (26.4-45, occupied 2026-06-30): they looked up a June
+-- baseline, and no June cruise ran 1993-2013 (Rasmus Swalethorp, 2026-10-06).
 --
 -- An INNER join, so a cell with no baseline is ABSENT rather than zero. An
 -- unsampled baseline is not a zero anomaly, and collapsing the two is how a plot
@@ -279,7 +285,7 @@ JOIN section_station ss
 JOIN climatology cl
   ON cl.dataset_key = s.dataset_key
  AND cl.site_key = ss.site_key
- AND cl.mon      = month(ss.datetime)
+ AND cl.mon      = TRY_CAST(substr(s.cruise_key, 6, 2) AS INTEGER)
  AND cl.depth_m  = s.depth_m
  AND cl.var      = s.var;
 

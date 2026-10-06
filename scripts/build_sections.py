@@ -44,7 +44,7 @@ DISTANCE — TWO RULERS, BOTH BAKED
 ANOMALY
     Each shard carries an `anom` matrix beside every `vars` matrix, differenced
     against the release's own `climatology` table (calcofi4db::build_climatology():
-    station x calendar month x 10 m bin, 1993-2013, >= 5 cruises) — the same
+    station x cruise month x 10 m bin, 1993-2013, >= 5 cruises) — the same
     baseline the CalCOFI Explorer subtracts. Cells with no baseline are null, never 0.
 
 WHAT IS NOT DRAWN (scripts/display_rules.py)

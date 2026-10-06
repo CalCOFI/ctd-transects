@@ -11,6 +11,9 @@ build then DOES with the bytes, one small fixture per rule (ctd-transects#5, #6)
     either (spiciness0 <- temperature_ave / salinity_ave_corr; sigma_theta_ave
     <- both sigma_theta sensors flagged). The summary counts what the guard dropped.
   * the anomaly subtracts the climatology of the dataset the value came from.
+  * the anomaly is matched on the CRUISE's month (MM of cruise_key), never the
+    cast's calendar month: cruise 2026-07-3322 occupied line 93.3 inshore on
+    2026-06-30 and those casts must find the July baseline, not a June one.
 
 The fixture is written as parquet with the duckdb CLI (the same binary refresh.yml
 installs), described by a catalog in the release's content-addressed shape, and
@@ -75,7 +78,12 @@ UNION ALL SELECT * FROM (VALUES
   ('calcofi_ctd-cast:cast:2504_901d', 'calcofi_ctd-cast', 'cast', '2025-04-3322',
    'st26.4-ln93.4', '093.4 026.4', 32.9, -117.33, TIMESTAMP '2025-04-10 06:00:00', 'final'),
   ('calcofi_ctd-cast:cast:2504_902d', 'calcofi_ctd-cast', 'cast', '2025-04-3322',
-   'st30.1-ln88.5', '088.5 030.1', 33.3, -117.40, TIMESTAMP '2025-04-10 03:00:00', 'final'));
+   'st30.1-ln88.5', '088.5 030.1', 33.3, -117.40, TIMESTAMP '2025-04-10 03:00:00', 'final'),
+  -- cruise 2026-07-3322 (designated July) occupied these on the last day of JUNE
+  ('calcofi_ctd-cast:cast:2607_030d', 'calcofi_ctd-cast', 'cast', '2026-07-3322',
+   'st30-ln93.3', '093.3 030.0', 32.85, -117.40, TIMESTAMP '2026-06-30 20:00:00', 'final'),
+  ('calcofi_ctd-cast:cast:2607_040d', 'calcofi_ctd-cast', 'cast', '2026-07-3322',
+   'st40-ln93.3', '093.3 040.0', 32.80, -117.55, TIMESTAMP '2026-06-30 23:00:00', 'final'));
 
 -- (station, depth, type, value, qual)
 CREATE TABLE obs_rows AS SELECT * FROM (VALUES
@@ -122,19 +130,27 @@ SELECT 'calcofi_ctd-cast:cast:2504_' || lpad(CAST(sta AS VARCHAR), 3, '0') || 'd
        '2025-04-3322' AS cruise_key, depth_min_m, depth_min_m AS depth_max_m,
        measurement_type, measurement_value, CAST(measurement_qual AS VARCHAR) AS measurement_qual,
        dataset_key
-FROM obs_rows;
+FROM obs_rows
+UNION ALL SELECT * FROM (VALUES
+  ('calcofi_ctd-cast:cast:2607_030d', '2026-07-3322', 1.0, 1.0, 'temperature_ave', 17.0, NULL, 'calcofi_ctd-cast'),
+  ('calcofi_ctd-cast:cast:2607_040d', '2026-07-3322', 1.0, 1.0, 'temperature_ave', 17.5, NULL, 'calcofi_ctd-cast'));
 
 CREATE TABLE climatology AS SELECT * FROM (VALUES
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',      0.05, 0.1, 40, 12),
   ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',    100.0,  0.1, 40, 12),  -- decoy
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'sigma_theta_ave', 24.5, 0.2, 40, 12),
-  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'temperature_ave', 14.0, 0.5, 40, 12))
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'temperature_ave', 14.0, 0.5, 40, 12),
+  -- station 30: July (the cruise's month) and a June decoy; station 40: June only
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 7, 0, 'temperature_ave', 16.0, 0.5, 40, 12),
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 6, 0, 'temperature_ave', 99.0, 0.5, 40, 12),
+  ('calcofi_ctd-cast',    '093.3 040.0', 'st40-ln93.3', 6, 0, 'temperature_ave', 15.0, 0.5, 40, 12))
   t(dataset_key, site_key, grid_key, month, depth_bin, measurement_type,
     clim_mean, clim_sd, clim_n, n_cruises);
 ALTER TABLE climatology ADD COLUMN clim_yr_min SMALLINT DEFAULT 1993;
 ALTER TABLE climatology ADD COLUMN clim_yr_max SMALLINT DEFAULT 2013;
 
-CREATE TABLE cruise AS SELECT '2025-04-3322' AS cruise_key, '33RL' AS ship_key;
+CREATE TABLE cruise AS SELECT * FROM (VALUES ('2025-04-3322', '33RL'), ('2026-07-3322', '33RL'))
+  t(cruise_key, ship_key);
 CREATE TABLE ship AS SELECT '33RL' AS ship_key, 'Reuben Lasker' AS ship_name;
 CREATE TABLE measurement_type AS SELECT * FROM (VALUES
   ('temperature_ave', 'Average temperature', 'degC', -2.0, 40.0),
@@ -208,9 +224,10 @@ class BuildSectionsSQL(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def section(self, where="TRUE"):
+    def section(self, where="TRUE", cruise=CRUISE):
         return rows(self.d, "SELECT dataset_key, var, sta, depth_m, value "
-                            f"FROM 'public/data/_sections.parquet' WHERE {where} "
+                            f"FROM 'public/data/_sections.parquet' "
+                            f"WHERE cruise_key = '{cruise}' AND {where} "
                             "ORDER BY var, sta, depth_m")
 
     def test_variables_drawn(self):
@@ -246,18 +263,28 @@ class BuildSectionsSQL(unittest.TestCase):
 
     def test_anomaly_uses_the_values_own_dataset_climatology(self):
         a = rows(self.d, "SELECT var, sta, depth_m, anomaly FROM 'public/data/_anomaly.parquet' "
-                         "ORDER BY var")
+                         f"WHERE cruise_key = '{CRUISE}' ORDER BY var")
         self.assertEqual(a, [
             {"var": "sigma_theta_ave", "sta": 30.0, "depth_m": 0, "anomaly": 0.1},
             {"var": "spiciness0",      "sta": 30.0, "depth_m": 0, "anomaly": 0.2},
             {"var": "temperature_ave", "sta": 30.0, "depth_m": 0, "anomaly": 1.0},
         ])
 
+    def test_anomaly_matches_the_cruise_month_not_the_cast_month(self):
+        # cruise 2026-07-3322's casts on 2026-06-30: station 30 is differenced
+        # against its JULY baseline (16.0), never the June decoy (99.0); station
+        # 40 has only a June baseline, so it gets no anomaly at all
+        a = rows(self.d, "SELECT sta, depth_m, anomaly, clim_mean::DOUBLE AS clim_mean FROM 'public/data/_anomaly.parquet' "
+                         "WHERE cruise_key = '2026-07-3322' ORDER BY sta")
+        self.assertEqual(a, [{"sta": 30.0, "depth_m": 0, "anomaly": 1.0, "clim_mean": 16.0}])
+        # both stations are still drawn in the value view
+        self.assertEqual(len(self.section("var = 'temperature_ave'", cruise="2026-07-3322")), 2)
+
     def test_section_line_is_the_stations_own_line_not_the_cell(self):
         # v2026.10.04: 93.4 26.4 is a one-cell line of its own; keyed on the cell it
         # would leave line 93.3, keyed on its site_key it is 0.1 off 93.3 and joins it
         r = rows(self.d, "SELECT line::DOUBLE AS line, sta, grid_key FROM 'public/data/_stations.parquet' "
-                         "ORDER BY sta")
+                         f"WHERE cruise_key = '{CRUISE}' ORDER BY sta")
         self.assertEqual([(x["line"], x["sta"]) for x in r],
                          [(93.3, 26.4), (93.3, 30.0), (93.3, 40.0), (93.3, 50.0)])
         self.assertEqual(r[0]["grid_key"], "st26.4-ln93.4")

@@ -73,6 +73,26 @@ is the cruise's designated month (the `MM` of `cruise_key` `YYYY-MM-NODC`), neve
 the day a cast was occupied: a July cruise's casts on 30 June are compared with
 July.
 
+From calcofi4db 4.24.0 the same table carries a **seasonal baseline** beside the
+monthly one (`quarter`, `season_mean`, … of the cruise's quarter, repeated on each of
+its months), and a row whose monthly `clim_mean` is NULL — the month is below the
+5-cruise floor, the quarter is not — is "no monthly baseline", exactly as an absent
+row is. Each shard ships `anom_season` beside `anom`, and the app's **Baseline**
+control (`?base=season`) swaps them; the caption names the normal in view ("April
+normal" / "Apr–Jun normal") and counts only cells that have one. The build
+feature-detects the columns (an empty typed `SELECT` unioned `BY NAME`), so a release
+without them builds unchanged and `index.json`'s `baseline.has_season` disables the
+toggle.
+
+Over the section the app draws two **per-cast lines** from `calcofi_ctd-derived`'s
+`sample_measurement` rows: the mixed-layer depth (`mld_sigma_theta_002`, Δσθ =
+0.02 kg/m³ from 10 m) and the chlorophyll-maximum depth (`chl_max_depth`), each with
+its normal dashed in the same colour — the climatology's per-cast cells (`depth_bin`
+NULL, matched with `IS NULL`) for the selected baseline. `?lines=off` hides them. A
+release without per-cast cells draws the solid lines alone; one without
+`sample_measurement` (`scripts/sample_measurement_fallback.sql`) draws none; a CTD-only
+cruise draws none (display rule 5).
+
 That matrix goes straight to a Plotly `heatmap` with `zsmooth: "best"`. There is
 **no interpolation code in the browser**: `ctd-viz` gets its smooth ODV-style field
 from `MBA::mba.surf()`, a multilevel B-spline with no JavaScript port, and letting
@@ -94,6 +114,7 @@ for the promoted and consolidated versions. Same rule as
 
 ```bash
 python3 scripts/resolve_release.py             # latest.txt + catalog -> build/build_sections.sql  (--version vYYYY.MM.DD to pin)
+# a staged candidate: CALCOFI_RELEASE_PREFIX=ducklake-staging/releases CALCOFI_RELEASE_VERSION=vYYYY.MM.DD python3 scripts/resolve_release.py
 duckdb -c ".read build/build_sections.sql"     # query the release  (~30 s)
 pip install -r requirements.txt
 python scripts/build_sections.py               # reshape into shards (~6 s)

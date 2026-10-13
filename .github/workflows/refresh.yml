@@ -71,6 +71,11 @@ jobs:
       - name: Self-test the station ruler
         run: python3 scripts/test_station_ruler.py
 
+      # the reshaper: a NULL anomaly (a NULL monthly mean) stays a blank cell with
+      # no baseline count; the seasonal matrices and the MLD / chl-max lines
+      - name: Self-test the section reshaping
+        run: python3 scripts/test_build_sections_reshape.py
+
       - name: Rebuild transect data from the integrated DB
         run: |
           # git does not track empty directories, and public/data/ ships empty on

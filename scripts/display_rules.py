@@ -60,6 +60,13 @@ STAGE_VARS = {
 # so the stage rule's test can say what must never reach a CTD-only cruise.
 DERIVED_VARS = frozenset({"sigma_theta_ave", "spiciness0"})
 
+# The per-cast calcofi_ctd-derived values drawn as lines over a section (shard
+# `lines`): the mixed-layer depth and the chlorophyll-maximum depth. They pass
+# through stage_filter with the matrices — not in STAGE_VARS' temperature set, so a
+# CTD-only cruise draws neither (an MLD from uncorrected salinity, a chlorophyll
+# maximum from uncorrected chlorophyll).
+CAST_LINE_VARS = frozenset({"mld_sigma_theta_002", "chl_max_depth"})
+
 STA_SUFFIX = "_sta_corr"
 CRUISE_SUFFIX = "_cruise_corr"
 

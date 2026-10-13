@@ -43,6 +43,8 @@ reads directly, so the app resolves the same way without fetching the catalog.
     python3 scripts/resolve_release.py                       # latest.txt, every scripts/build_*.sql -> build/
     python3 scripts/resolve_release.py --version v2026.08.25 scripts/build_stations.sql
     python3 scripts/resolve_release.py --catalog build/catalog.json --expr region
+    CALCOFI_RELEASE_PREFIX=ducklake-staging/releases CALCOFI_RELEASE_VERSION=v2026.10.13 \
+      python3 scripts/resolve_release.py                     # a staged candidate
     python3 scripts/test_resolve_release.py                  # the self-test (stdlib unittest)
 
 Standard library only — it runs inside GitHub Actions before anything is
@@ -70,13 +72,35 @@ LEFTOVER_RE = re.compile(r"__(?:TBL:\S*?|RELEASE)__")
 
 # A table the build needs that an older release does not carry yet. When the
 # catalog has no entry for it, the token is rendered as the file's SELECT, in
-# parentheses, against the tables the release does carry — the same definition
-# the release runs (calcofi4db::build_climatology()), and a loud note on stderr.
-# Only `climatology` (releases from v2026.09) has one; delete the entry and the
-# file once every release this app can be pointed at ships the table.
+# parentheses, against the tables the release does carry, with a loud note on
+# stderr. `climatology` (releases from v2026.09) is the same definition the release
+# runs (calcofi4db::build_climatology()); `sample_measurement` is an empty table of
+# the same columns (no per-cast values, so no MLD / chl-max lines). Delete an entry
+# and its file once every release this app can be pointed at ships the table.
+_HERE = os.path.dirname(os.path.abspath(__file__))
 FALLBACKS = {
-    "climatology": os.path.join(os.path.dirname(os.path.abspath(__file__)), "climatology_fallback.sql"),
+    "climatology": (os.path.join(_HERE, "climatology_fallback.sql"),
+                    "computing it inline from {file} (the same definition as "
+                    "calcofi4db::build_climatology(); releases from v2026.09 ship the table)"),
+    "sample_measurement": (os.path.join(_HERE, "sample_measurement_fallback.sql"),
+                           "reading it as empty ({file}): no per-cast values, so no "
+                           "mixed-layer-depth or chlorophyll-maximum lines"),
 }
+
+# Where releases live. A STAGING run is a staging run everywhere (CalCOFI/workflows
+# release-run rule): CALCOFI_RELEASE_PREFIX=ducklake-staging/releases points the
+# build at a staged candidate's catalog.json (whose objects[] already name the
+# staging tables), and CALCOFI_RELEASE_VERSION picks the version when --version is
+# not given. Both default to the promoted releases and latest.txt.
+DEFAULT_RELEASE_PREFIX = "ducklake/releases"
+
+
+def release_prefix() -> str:
+    return (os.environ.get("CALCOFI_RELEASE_PREFIX") or DEFAULT_RELEASE_PREFIX).strip("/")
+
+
+def releases_https() -> str:
+    return f"{BUCKET_HTTPS}/{release_prefix()}"
 
 
 def log(msg: str) -> None:
@@ -89,16 +113,18 @@ def fetch_text(url: str) -> str:
 
 
 def resolve_version(version: str | None) -> str:
-    """`None`/`latest` -> the promoted version from latest.txt; else as given."""
+    """`None`/`latest` -> $CALCOFI_RELEASE_VERSION, else latest.txt; else as given."""
     if version in (None, "", "latest"):
-        return fetch_text(f"{RELEASES_HTTPS}/latest.txt").strip().splitlines()[0]
+        version = os.environ.get("CALCOFI_RELEASE_VERSION") or None
+    if version in (None, "", "latest"):
+        return fetch_text(f"{releases_https()}/latest.txt").strip().splitlines()[0]
     if not version.startswith("v"):
         sys.exit(f"resolve_release: version must be 'latest' or like 'v2026.08.25', got {version!r}")
     return version
 
 
 def fetch_catalog(version: str) -> dict:
-    return json.loads(fetch_text(f"{RELEASES_HTTPS}/{version}/catalog.json"))
+    return json.loads(fetch_text(f"{releases_https()}/{version}/catalog.json"))
 
 
 def has_table(catalog: dict, table: str) -> bool:
@@ -142,7 +168,7 @@ def release_sources(catalog: dict, table: str, partition: tuple[str, str] | None
                 "single_file": single_file}
     # legacy layout (releases before v2026.09): one parquet per table, or a
     # hive-partitioned directory that only a gs:// glob can enumerate
-    base = f"ducklake/releases/{catalog['version']}/parquet"
+    base = f"{release_prefix()}/{catalog['version']}/parquet"
     if partitioned:
         sub = f"{partition[0]}={partition[1]}/*.parquet" if partition else "**/*.parquet"
         return {"urls": [f"{BUCKET_GS}/{base}/{table}/{sub}"],
@@ -181,10 +207,10 @@ def render(sql: str, catalog: dict) -> str:
     def sub(m: re.Match) -> str:
         table, key, value = m.groups()
         if key is None and table in FALLBACKS and not has_table(catalog, table):
+            path, note = FALLBACKS[table]
             log(f"resolve_release: NOTE {table!r} is not in the {catalog['version']} catalog — "
-                f"computing it inline from {os.path.relpath(FALLBACKS[table])} (the same definition "
-                f"as calcofi4db::build_climatology(); releases from v2026.09 ship the table)")
-            with open(FALLBACKS[table]) as f:
+                + note.format(file=os.path.relpath(path)))
+            with open(path) as f:
                 inner = render(f.read(), catalog)
             # comment lines would swallow the rest of the outer line once inlined
             code = "\n".join(l.partition("--")[0].rstrip() for l in inner.split("\n"))
@@ -212,7 +238,8 @@ def main(argv: list[str] | None = None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("sql", nargs="*",
                    help="SQL files to render (default: every scripts/build_*.sql carrying a token)")
-    p.add_argument("--version", help="release version (default: latest.txt); ignored with --catalog")
+    p.add_argument("--version", help="release version (default: $CALCOFI_RELEASE_VERSION, else "
+                                     "latest.txt under $CALCOFI_RELEASE_PREFIX); ignored with --catalog")
     p.add_argument("--catalog", help="read this catalog.json instead of fetching one (fixtures, offline)")
     p.add_argument("--out-dir", default="build", help="where rendered SQL goes (default: build/)")
     p.add_argument("--tables-json", help="also write {version, tables} here for the browser app")

@@ -46,6 +46,16 @@ ANOMALY
     against the release's own `climatology` table (calcofi4db::build_climatology():
     station x cruise month x 10 m bin, 1993-2013, >= 5 cruises) — the same
     baseline the CalCOFI Explorer subtracts. Cells with no baseline are null, never 0.
+    Beside it, `anom_season` / `anom_season_n` are the departure from the cruise
+    quarter's baseline (calcofi4db 4.24.0, the app's monthly / seasonal toggle); a
+    release without season columns ships them empty and index.json's
+    `baseline.has_season` is false.
+
+PER-CAST LINES
+    `lines` carries, per station, the cast's mixed-layer depth and chlorophyll-maximum
+    depth (calcofi_ctd-derived, sample_measurement) with their monthly and seasonal
+    normals (the climatology's per-cast cells, depth_bin NULL) — drawn as lines over
+    the section, the normals dashed. Null where a station has no value or no normal.
 
 WHAT IS NOT DRAWN (scripts/display_rules.py)
     A section with fewer than 3 stations is not written. Within a section, a
@@ -118,6 +128,16 @@ FALLBACK_META = {
         "units": "ml/L",
     },
 }
+
+# The per-cast calcofi_ctd-derived values drawn as lines over the section (the
+# measurement types build_sections.sql reads from sample_measurement), in legend
+# order. Labels are this app's: the registry's descriptions are definitions.
+CAST_LINES = [
+    ("mld_sigma_theta_002", {"label": "Mixed-layer depth", "units": "m",
+                             "detail": "Δσθ = 0.02 kg/m³ from 10 m"}),
+    ("chl_max_depth",       {"label": "Chlorophyll-max depth", "units": "m",
+                             "detail": "depth of the chlorophyll maximum"}),
+]
 
 # lines with near-complete cruise coverage; everything else is offered but not
 # defaulted to (lines 60-73.3 appear on ~20-27 cruises, vs ~90 for these)
@@ -227,9 +247,74 @@ def slug(s):
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(s))
 
 
+def _num(v, as_int=False):
+    if v is None or pd.isna(v):
+        return None
+    return int(v) if as_int else float(v)
+
+
+def anomaly_matrices(ga, sta_ix, depth_ix, n_sta, value_col, n_col):
+    """{var: z} anomaly and {var: z} baseline-size matrices for one baseline.
+
+    A cell is filled only where its anomaly is non-NULL: the release's climatology can
+    carry a row whose monthly mean is NULL (the quarter passes the cruise floor, the
+    month does not), and that row is no monthly baseline — so neither its anomaly nor
+    its n_cruises is drawn. A variable with no cell at all is left out, so the app's
+    "has an anomaly" test is the presence of the key.
+    """
+    anoms, ns = {}, {}
+    if ga is None:
+        return anoms, ns
+    for v, gv in ga.groupby("var", sort=False):
+        za = [[None] * n_sta for _ in DEPTHS]
+        zn = [[None] * n_sta for _ in DEPTHS]
+        any_cell = False
+        for s_, d, val, n in zip(gv["sta"], gv["depth_m"], gv[value_col], gv[n_col]):
+            si = sta_ix.get(float(s_))
+            di = depth_ix.get(int(d))
+            if si is None or di is None or pd.isna(val):
+                continue
+            za[di][si] = float(val)
+            zn[di][si] = _num(n, as_int=True)
+            any_cell = True
+        if any_cell:
+            anoms[v] = za
+            ns[v] = zn
+    return anoms, ns
+
+
+def cast_lines(gc, sta_ix, n_sta):
+    """{var: {value, month, season, n_month, n_season}} — one list entry per station.
+
+    `month` / `season` are the per-cast normals (the climatology's depth_bin-NULL
+    cells) for the cruise's month and quarter, null where there is none; a variable
+    with no value at any station is left out.
+    """
+    out = {}
+    if gc is None:
+        return out
+    for v, gv in gc.groupby("var", sort=False):
+        rec = {k: [None] * n_sta for k in ("value", "month", "season", "n_month", "n_season")}
+        for _, r in gv.iterrows():
+            si = sta_ix.get(float(r["sta"]))
+            if si is None or pd.isna(r["value"]):
+                continue
+            rec["value"][si] = float(r["value"])
+            rec["month"][si] = _num(r["clim_mean"])
+            rec["season"][si] = _num(r["season_mean"])
+            rec["n_month"][si] = (_num(r["n_cruises"], as_int=True)
+                                  if rec["month"][si] is not None else None)
+            rec["n_season"][si] = (_num(r["season_n_cruises"], as_int=True)
+                                   if rec["season"][si] is not None else None)
+        if any(x is not None for x in rec["value"]):
+            out[v] = rec
+    return out
+
+
 def main():
     sec = pd.read_parquet(DATA / "_sections.parquet")
     anm = pd.read_parquet(DATA / "_anomaly.parquet")
+    cst = pd.read_parquet(DATA / "_cast.parquet")
     bas = pd.read_parquet(DATA / "_baseline.parquet").iloc[0]
     sta = pd.read_parquet(DATA / "_stations.parquet")
     cru = pd.read_parquet(DATA / "_cruises.parquet")
@@ -243,6 +328,8 @@ def main():
     # anomaly indexed the same way the section grids are built, so the two
     # matrices are filled in one pass per (line, cruise)
     anm_by_sec = {k: v for k, v in anm.groupby(["line_s", "cruise_key"], sort=False)}
+    cst["line_s"] = cst["line"].map(fmt_line)
+    cst_by_sec = {k: v for k, v in cst.groupby(["line_s", "cruise_key"], sort=False)}
 
     # the seafloor sampled every 500 m along each line, keyed by distance from the
     # line's most-inshore grid station
@@ -378,22 +465,15 @@ def main():
         # from. It rides along so the app can show it in the hover tooltip
         # without a second lookup; every anomaly cell has one (same join),
         # so the two matrices are never out of step.
-        anoms = {}
-        anoms_n = {}
+        #
+        # The seasonal pair (anom_season / anom_season_n) is the same against the
+        # cruise quarter's baseline; empty on a release without one.
         ga = anm_by_sec.get((line_s, cruise_key))
-        if ga is not None:
-            for v, gv in ga.groupby("var", sort=False):
-                za = [[None] * n_sta for _ in DEPTHS]
-                zn = [[None] * n_sta for _ in DEPTHS]
-                for s_, d, val, n in zip(gv["sta"], gv["depth_m"], gv["anomaly"],
-                                          gv["n_cruises"]):
-                    si = sta_ix.get(float(s_))
-                    di = depth_ix.get(int(d))
-                    if si is not None and di is not None:
-                        za[di][si] = None if pd.isna(val) else float(val)
-                        zn[di][si] = None if pd.isna(n) else int(n)
-                anoms[v] = za
-                anoms_n[v] = zn
+        anoms, anoms_n = anomaly_matrices(ga, sta_ix, depth_ix, n_sta,
+                                          "anomaly", "n_cruises")
+        anoms_s, anoms_s_n = anomaly_matrices(ga, sta_ix, depth_ix, n_sta,
+                                              "anomaly_season", "season_n_cruises")
+        cast = cast_lines(cst_by_sec.get((line_s, cruise_key)), sta_ix, n_sta)
 
         knots_along = [x for x in st["line_dist_km"].tolist()]
         prof = None
@@ -401,12 +481,17 @@ def main():
             prof = floor_profile(floor_by_line.get(line_s), knots_along, dist)
 
         stage = st["data_stage"].dropna()
-        grids, anoms, anoms_n = stage_filter(stage.iloc[0] if len(stage) else None,
-                                             grids, anoms, anoms_n)
+        # the per-cast lines go through the same stage rule: an MLD needs
+        # bottle-corrected salinity and a chlorophyll maximum corrected chlorophyll,
+        # so a CTD-only cruise draws neither (it is not in STAGE_VARS' temperature set)
+        grids, anoms, anoms_n, anoms_s, anoms_s_n, cast = stage_filter(
+            stage.iloc[0] if len(stage) else None,
+            grids, anoms, anoms_n, anoms_s, anoms_s_n, cast)
         # per-variable display rules, applied to the measured matrices and carried
         # through to the anomaly ones; `withheld` says what went and why, so the
         # app can tell the reader rather than silently omit it
-        grids, anoms, anoms_n, withheld = apply_variable_rules(grids, anoms, anoms_n)
+        grids, anoms, anoms_n, anoms_s, anoms_s_n, withheld = apply_variable_rules(
+            grids, anoms, anoms_n, anoms_s, anoms_s_n)
         if not section_is_drawable(n_sta, grids):
             n_skipped["variables"] += 1
             continue
@@ -419,6 +504,9 @@ def main():
             "vars": grids,
             "anom": anoms,
             "anom_n": anoms_n,
+            "anom_season": anoms_s,
+            "anom_season_n": anoms_s_n,
+            "lines": cast,
             "floor": prof,
             "withheld": withheld,
         }
@@ -435,6 +523,8 @@ def main():
             "n_stations": n_sta,
             "vars": sorted(grids.keys()),
             "anom_vars": sorted(anoms.keys()),
+            "anom_season_vars": sorted(anoms_s.keys()),
+            "line_vars": sorted(cast.keys()),
             "withheld": withheld,
             # unavailable *_sta_corr -> its *_cruise_corr sibling, where drawn;
             # the app's fallback when the selected variable is not on offer here
@@ -504,9 +594,17 @@ def main():
             "min_cruises": int(bas["min_cruises"]),
             "n_cells":   int(bas["n_cells"]),
             "n_cruises": int(bas["n_cruises"]),
+            # feature flags for a release cut before calcofi4db 4.24.0, which has
+            # neither: no seasonal toggle, no dashed normals (the lines still draw)
+            "has_season":         bool(bas["has_season"]),
+            "season_min_cruises": _num(bas["season_min_cruises"], as_int=True),
+            "n_season_cells":     int(bas["n_season_cells"]),
+            "has_cast_normal":    bool(bas["has_cast_normal"]),
         },
         "lines": lines,
         "variables": variables,
+        # the per-cast lines drawn over a section, in legend order (shard `lines`)
+        "cast_lines": [{"var": v, **meta} for v, meta in CAST_LINES],
         "default": {
             "line": lines[0]["line"] if lines else None,
             "cruise_key": lines[0]["cruises"][0]["cruise_key"] if lines else None,
@@ -543,7 +641,13 @@ def main():
     print(f"stations : {len(stations_json)} grid stations")
     print(f"baseline : {int(bas['yr_min'])}-{int(bas['yr_max'])}, "
           f"{int(bas['n_cells']):,} cells from {int(bas['n_cruises'])} cruises "
-          f"(min_cruises={int(bas['min_cruises'])})")
+          f"(min_cruises={int(bas['min_cruises'])}); seasonal: "
+          + (f"{int(bas['n_season_cells']):,} cells" if bool(bas["has_season"])
+             else "none in this release"))
+    n_lines = sum(1 for cs in index_lines.values() for c in cs.values() if c["line_vars"])
+    print(f"lines    : MLD / chl-max lines on {n_lines} of {n_written} shards; "
+          f"{len(cst):,} cast values, {int(cst['clim_mean'].notna().sum()):,} with a "
+          f"monthly normal, {int(cst['season_mean'].notna().sum()):,} with a seasonal one")
 
 
 if __name__ == "__main__":

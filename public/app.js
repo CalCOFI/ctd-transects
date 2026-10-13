@@ -6,9 +6,9 @@
  * gives the smooth ODV-style field that apps/ctd-viz gets from MBA::mba.surf()
  * — a multilevel B-spline with no JavaScript port.
  *
- * State lives in the URL (?line=90&cruise=2026-04-3322&var=temperature_ave) so a
- * section can be linked to, which is the main thing people want from a plot like
- * this.
+ * State lives in the URL (?line=90&cruise=2026-04-3322&var=temperature_ave, plus
+ * mode=, ruler=line, base=season and lines=off) so a section can be linked to,
+ * which is the main thing people want from a plot like this.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -106,10 +106,16 @@ function scaleFor(varName, mode) {
 const theme = () => darkMode()
   ? { ink: "#e6e9ed", grid: "#3a3f44", panel: "#2c3035",
       contour: "rgba(255,255,255,0.5)", floor: "rgba(150,158,166,0.85)",
-      floorLine: "#1b1d20" }
+      floorLine: "#1b1d20", legendBg: "rgba(44,48,53,0.85)",
+      // per-cast lines: a hue off both ramps, on a contrasting halo, so each reads
+      // over the deepest blue, the darkest red and the neutral alike
+      halo: "rgba(0,0,0,0.75)",
+      castLine: { mld_sigma_theta_002: "#f5f5f5", chl_max_depth: "#4ade80" } }
   : { ink: "#212529", grid: "#dee2e6", panel: "#f1f3f5",
       contour: "rgba(255,255,255,0.7)", floor: "rgba(120,128,136,0.9)",
-      floorLine: "#333" };
+      floorLine: "#333", legendBg: "rgba(255,255,255,0.85)",
+      halo: "rgba(255,255,255,0.85)",
+      castLine: { mld_sigma_theta_002: "#111111", chl_max_depth: "#0b7a35" } };
 
 /* ── labels ──────────────────────────────────────────────────────────────── */
 
@@ -160,6 +166,10 @@ function readURL() {
     // absent means the default, which is the OCCUPIED ruler: show the data as
     // large as it can be drawn, and let comparison be the thing you opt into
     ruler: p.get("ruler") === "line" ? "line" : "occupied",
+    // the baseline: the cruise's month (default) or its quarter (?base=season)
+    base: p.get("base") === "season" ? "season" : "month",
+    // the MLD / chlorophyll-maximum lines are drawn unless ?lines=off
+    lines: p.get("lines") !== "off",
   };
 }
 
@@ -169,7 +179,60 @@ function writeURL(sel) {
   // the anomaly is the default view; a measured-value link says so explicitly
   p.set("mode", sel.mode === "value" ? "value" : "anomaly");
   if (sel.ruler === "line") p.set("ruler", "line");
+  if (sel.base === "season") p.set("base", "season");
+  if (sel.lines === false) p.set("lines", "off");
   history.replaceState(null, "", `${location.pathname}?${p}`);
+}
+
+/* ── baselines: the cruise's month or its quarter ────────────────────────── */
+
+/* The month is the cruise's designated month (the MM of cruise_key YYYY-MM-NODC),
+ * never the day a cast was occupied; the quarter is that month's (Q1 Jan–Mar …
+ * Q4 Oct–Dec), the same rule calcofi4db's build_climatology(season = TRUE) keys
+ * the seasonal baseline on — so 2026-07-3322 is Q3 even where it worked 30 June. */
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
+                     "August", "September", "October", "November", "December"];
+const QUARTER_NAMES = ["Jan–Mar", "Apr–Jun", "Jul–Sep", "Oct–Dec"];
+
+function cruiseMonth(cruiseKey) { return Number(cruiseKey.slice(5, 7)); }
+function cruiseQuarter(cruiseKey) { return Math.floor((cruiseMonth(cruiseKey) - 1) / 3) + 1; }
+
+/* "July" / "Jul–Sep" — what the normal is the normal OF */
+function baselinePeriod(base, cruiseKey) {
+  return base === "season" ? QUARTER_NAMES[cruiseQuarter(cruiseKey) - 1]
+                           : MONTH_NAMES[cruiseMonth(cruiseKey) - 1];
+}
+
+/* "July normal, 1993–2013" / "Jul–Sep normal, 1993–2013" */
+function baselineName(base, cruiseKey) {
+  const b = state.index.baseline;
+  return `${baselinePeriod(base, cruiseKey)} normal` + (b ? `, ${b.yr_min}–${b.yr_max}` : "");
+}
+
+/* The release ships a seasonal baseline (calcofi4db 4.24.0). A release cut before it
+ * has no season columns: index.json says has_season false, and the toggle is off. */
+const releaseHasSeason = () => !!(state.index.baseline && state.index.baseline.has_season);
+
+/* The anomaly matrices for a baseline: {var: z} and the per-cell cruise counts. */
+function anomFor(shard, base) {
+  return base === "season"
+    ? { z: shard.anom_season || {}, n: shard.anom_season_n || {} }
+    : { z: shard.anom || {}, n: shard.anom_n || {} };
+}
+
+/* Cells with a value, and of those, cells with an anomaly against `za`. A NULL
+ * anomaly — which is what a NULL monthly mean becomes — is no baseline, so the
+ * percentage counts non-null cells, never joined rows. */
+function countAnom(zv, za) {
+  let nVal = 0, nAnom = 0;
+  if (!zv) return { nVal, nAnom };
+  for (let i = 0; i < zv.length; i++)
+    for (let j = 0; j < zv[i].length; j++)
+      if (zv[i][j] != null) {
+        nVal++;
+        if (za && za[i] && za[i][j] != null) nAnom++;
+      }
+  return { nVal, nAnom };
 }
 
 /* ── selection ───────────────────────────────────────────────────────────── */
@@ -268,7 +331,9 @@ function resolve(sel) {
   // defaults on every render
   return { line: line.line, cruise: cruise.cruise_key, var: v ? v.var : null,
            mode: sel.mode === "anomaly" ? "anomaly" : "value",
-           ruler: sel.ruler === "line" ? "line" : "occupied" };
+           ruler: sel.ruler === "line" ? "line" : "occupied",
+           base: sel.base === "season" ? "season" : "month",
+           lines: sel.lines !== false };
 }
 
 /* ── the section plot ────────────────────────────────────────────────────── */
@@ -321,16 +386,25 @@ function baselineBadgeDefault(b) {
 
 /* Stations that were measured but have no baseline anywhere in their column
  * (so drawSection leaves them out of the anomaly field), named in the note. */
-function noBaselineNote(shard, zv, za) {
+function noBaselineNote(shard, zv, za, base) {
   if (!zv) return "";
   const sta = shard.stations
     .filter((_, j) => zv.some((row) => row[j] != null) &&
                       !(za && za.some((row) => row && row[j] != null)))
     .map((s) => s.sta);
   if (!sta.length) return "";
+  const period = base === "season" ? "quarter" : "month";
   return ` Station${sta.length > 1 ? "s" : ""} ${sta.join(", ")} ` +
-    `ha${sta.length > 1 ? "ve" : "s"} no baseline for this cruise's month and ` +
+    `ha${sta.length > 1 ? "ve" : "s"} no baseline for this cruise's ${period} and ` +
     `${sta.length > 1 ? "are" : "is"} not drawn.`;
+}
+
+/* The release's own floor for the baseline in view — the badge and the tooltip
+ * flag a cell "at the release's own minimum" against it. */
+function baselineMin(base) {
+  const b = state.index.baseline;
+  return base === "season" && b.season_min_cruises != null ? b.season_min_cruises
+                                                           : b.min_cruises;
 }
 
 /* Min and max baseline size over the cells of the section in view, or null
@@ -363,7 +437,7 @@ function syncBaselineBadgeTo(n) {
   const b = state.index.baseline;
   const badge = $("baseline-badge");
   if (!b || !badge) return;
-  const thin = n <= b.min_cruises;
+  const thin = n <= baselineMin(state.base);
   badge.querySelector("b").textContent = `${n} cruise${n === 1 ? "" : "s"}`;
   $("baseline-hint").textContent = thin
     ? "— at the release's own minimum" : "— this cell";
@@ -398,9 +472,82 @@ function colorbarTitle(varName, units, anom) {
   return `${base} · − ${lo} / + ${hi}`;
 }
 
-function drawSection(shard, varName, maxDepth, mode, ruler) {
+/* ── per-cast lines: mixed-layer depth and the chlorophyll maximum ─────────── */
+
+/* Rasmus Swalethorp, 2026-10-07: anomalies of the derived CTD products. On a
+ * section the natural ones are LINES on the depth axis: the cruise's mixed-layer
+ * depth (mld_sigma_theta_002, CalCOFI's legacy Δσθ = 0.02 kg/m³ from 10 m) and the
+ * depth of its chlorophyll maximum, one point per station, each with its normal
+ * dashed in the same colour — the per-cast cells of the same climatology table,
+ * for the baseline the toggle picks. A gap is a station with no value, never
+ * bridged. On a release without per-cast normals only the solid lines draw.
+ *
+ * Every line sits on a halo of the opposite lightness, so it reads over the
+ * deepest blue, the darkest red and the neutral midpoint in either theme; the
+ * dash is given in px so the halo's dashes land under the line's. */
+const CAST_DASH = "8px,5px";
+
+function castLineText(meta, s, v, nv, n, base, cruiseKey, releaseNormals) {
+  const period = baselinePeriod(base, cruiseKey);
+  let out = `Station ${s.sta}`;
+  out += v != null ? `<br><b>${meta.label}</b>: ${v.toFixed(0)} m`
+                   : `<br>no ${meta.label.toLowerCase()} this cruise`;
+  if (nv != null) {
+    out += `<br>${baselineName(base, cruiseKey)}: ${nv.toFixed(0)} m` +
+           (n != null ? ` (${n} cruise${n === 1 ? "" : "s"})` : "");
+    if (v != null) {
+      const d = v - nv;
+      const how = Math.abs(d) < 0.5 ? "at" : d > 0 ? "deeper than" : "shallower than";
+      out += `<br>Difference: ${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(0)} m (${how} normal)`;
+    }
+  } else if (v != null) {
+    out += releaseNormals ? `<br>no ${period} normal at this station`
+                          : "<br>no normal in this release";
+  }
+  return out;
+}
+
+/* Push the line traces for whatever this shard carries; returns how many lines. */
+function pushCastLines(traces, shard, x, base, t) {
+  const lines = shard.lines || {};
+  const metas = (state.index.cast_lines || []).filter((m) => lines[m.var]);
+  const releaseNormals = !!(state.index.baseline && state.index.baseline.has_cast_normal);
+  const key = base === "season" ? "season" : "month";
+  const nKey = base === "season" ? "n_season" : "n_month";
+  const period = baselinePeriod(base, shard.cruise_key);
+  for (const m of metas) {
+    const L = lines[m.var];
+    const color = t.castLine[m.var] || t.ink;
+    const normal = L[key] || L.value.map(() => null);
+    const ns = L[nKey] || [];
+    const text = shard.stations.map((s, j) => castLineText(
+      m, s, L.value[j], normal[j], ns[j], base, shard.cruise_key, releaseNormals));
+    const hasNormal = normal.some((v) => v != null);
+    const common = { type: "scatter", x, legendgroup: m.var, connectgaps: false };
+    // halos first, so each coloured stroke sits on its own
+    traces.push({ ...common, mode: "lines", y: L.value,
+                  line: { color: t.halo, width: 5 }, hoverinfo: "skip", showlegend: false });
+    if (hasNormal)
+      traces.push({ ...common, mode: "lines", y: normal,
+                    line: { color: t.halo, width: 5, dash: CAST_DASH },
+                    hoverinfo: "skip", showlegend: false });
+    traces.push({ ...common, mode: "lines+markers", y: L.value, name: m.label,
+                  line: { color, width: 2 },
+                  marker: { color, size: 6, line: { color: t.halo, width: 1 } },
+                  text, hovertemplate: "%{text}<extra></extra>" });
+    if (hasNormal)
+      traces.push({ ...common, mode: "lines", y: normal, name: `${m.label}, ${period} normal`,
+                    line: { color, width: 2, dash: CAST_DASH },
+                    text, hovertemplate: "%{text}<extra></extra>" });
+  }
+  return metas.length;
+}
+
+function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", showLines = true) {
   const meta = state.index.variables.find((v) => v.var === varName);
   const anom = mode === "anomaly";
+  state.base = base;
+  const anomSet = anomFor(shard, base);
 
   /* Which ruler. `line_dist_km` is each station's distance along the full line;
    * it is null where the bathymetry build has no entry for a station, and a
@@ -411,7 +558,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
 
   const keep = shard.depths.map((d, i) => [d, i]).filter(([d]) => d <= maxDepth);
   const y = keep.map(([d]) => d);
-  const grid = anom ? (shard.anom || {})[varName] : shard.vars[varName];
+  const grid = anom ? anomSet.z[varName] : shard.vars[varName];
   const z = grid ? keep.map(([, i]) => grid[i]) : keep.map(() => x.map(() => null));
 
   /* A station whose whole column is empty in this view is left out of the
@@ -427,14 +574,18 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
   const zd = z.map((row) => cols.map((j) => row[j]));
   // per-cell baseline support, anomaly view only — same shape as `grid`, so the
   // same `keep`-filtered depth index lines it up with `z` row for row
-  const nGrid = anom ? (shard.anom_n || {})[varName] : null;
+  const nGrid = anom ? anomSet.n[varName] : null;
   const baseline = state.index.baseline;
+  const minN = baseline ? baselineMin(base) : null;
+  const period = baselinePeriod(base, shard.cruise_key);
   state.sectionN = sectionNRange(nGrid ? keep.map(([, i]) => nGrid[i]) : null);
   resetBaselineBadge();
 
   const t = theme();
   const units = meta.units || "";
   const zlabel = anom ? `${meta.label} anomaly` : meta.label;
+  // the title says which normal an anomaly departs from
+  const titleBase = anom ? ` vs ${period} normal` : "";
 
   const traces = [{
     type: "heatmap",
@@ -485,10 +636,10 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
         const label = `Station ${shard.stations[j].sta} · ${x[j].toFixed(0)} km`;
         const n = nRow ? nRow[j] : null;
         if (n == null || !baseline) return [label, ""];
-        const thin = n <= baseline.min_cruises;
+        const thin = n <= minN;
         const line = thin
-          ? `<br>baseline: ${n} cruise${n === 1 ? "" : "s"} — at the release's own minimum`
-          : `<br>baseline: ${n} cruises (${baseline.yr_min}–${baseline.yr_max})`;
+          ? `<br>${period} baseline: ${n} cruise${n === 1 ? "" : "s"} — at the release's own minimum`
+          : `<br>${period} baseline: ${n} cruises (${baseline.yr_min}–${baseline.yr_max})`;
         return [label, line, n];
       });
     }),
@@ -554,6 +705,9 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     });
   }
 
+  // the cast's mixed-layer depth and chlorophyll maximum, over the field
+  const nLines = showLines ? pushCastLines(traces, shard, x, base, t) : 0;
+
   /* Station tick marks along the top, drawn on the SECOND x-axis so that axis's
    * tick labels are the station numbers (an axis with no trace on it does not
    * render). The two rulers are the same ruler: `+proj=calcofi` is equidistant
@@ -569,7 +723,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     hovertemplate: shard.stations.map(
       (s, j) => `Station ${s.sta}<br>${s.dist_km.toFixed(0)} km offshore` +
              (s.bathy_m != null ? `<br>Seafloor ${s.bathy_m.toFixed(0)} m` : "") +
-             (drawn.has(j) ? "" : anom ? "<br>no baseline this cruise month — not drawn"
+             (drawn.has(j) ? "" : anom ? `<br>no ${period} baseline — not drawn`
                                       : "<br>no data — not drawn") +
              "<extra></extra>"),
     showlegend: false,
@@ -592,7 +746,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     // title to the container top keeps the two off each other
     margin: { l: PLOT_MARGIN_L, r: PLOT_MARGIN_R, t: 92, b: 52 },
     title: {
-      text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${zlabel}`,
+      text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${zlabel}${titleBase}`,
       font: { size: 15, color: t.ink },
       yref: "container", y: 0.985, yanchor: "top",
     },
@@ -635,6 +789,14 @@ function drawSection(shard, varName, maxDepth, mode, ruler) {
     plot_bgcolor: t.panel,
     paper_bgcolor: "rgba(0,0,0,0)",
     hovermode: "closest",
+    // only the MLD / chl-max lines carry a legend entry; inside the panel, at the
+    // offshore-deep corner, where the field is deep water and the seafloor rarely is
+    showlegend: nLines > 0,
+    legend: {
+      x: 0.01, xanchor: "left", y: 0.02, yanchor: "bottom",
+      bgcolor: t.legendBg, bordercolor: t.grid, borderwidth: 1,
+      font: { size: 11, color: t.ink },
+    },
   };
 
   Plotly.react($("plot"), traces, layout,
@@ -799,16 +961,34 @@ async function render(sel) {
   // mode picker that silently draws an empty panel is worse than one that says
   // the anomaly is unavailable.
   const zv = shard.vars[sel.var];
-  const za = shard.anom && shard.anom[sel.var];
-  let nVal = 0, nAnom = 0;
-  if (zv) {
-    for (let i = 0; i < zv.length; i++)
-      for (let j = 0; j < zv[i].length; j++)
-        if (zv[i][j] != null) {
-          nVal++;
-          if (za && za[i] && za[i][j] != null) nAnom++;
-        }
-  }
+
+  /* The baseline: the cruise's month, or its quarter where the release ships one
+   * (calcofi4db 4.24.0). On an older release the seasonal option is disabled and
+   * says why; a ?base=season link then draws the monthly baseline and the URL says
+   * so. Where the chosen baseline covers nothing in this section and the other
+   * does, the other is drawn and the note says so — as the anomaly view itself
+   * falls back to measured values below. */
+  const hasSeason = releaseHasSeason();
+  const baseEl = $("sel-base");
+  baseEl.options[1].disabled = !hasSeason;
+  $("ctl-base").title = hasSeason
+    ? "Monthly: the normal for the cruise's month. Seasonal: for its quarter " +
+      "(Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec), which fills stations whose month is thin."
+    : "This release's climatology has no seasonal baseline; releases from " +
+      "calcofi4db 4.24.0 add one.";
+  const counts = {
+    month:  countAnom(zv, anomFor(shard, "month").z[sel.var]),
+    season: hasSeason ? countAnom(zv, anomFor(shard, "season").z[sel.var])
+                      : { nVal: 0, nAnom: 0 },
+  };
+  let base = hasSeason && sel.base === "season" ? "season" : "month";
+  const other = base === "season" ? "month" : "season";
+  const swapped = counts[base].nAnom === 0 && counts[other].nAnom > 0;
+  if (swapped) base = other;
+  baseEl.value = base;
+  const za = anomFor(shard, base).z[sel.var];
+  const { nVal, nAnom } = counts[base];
+
   const hasAnom = nAnom > 0;
   const pctAnom = nVal ? Math.round((100 * nAnom) / nVal) : 0;
   const modeEl = $("sel-mode");
@@ -819,12 +999,19 @@ async function render(sel) {
   const anomNote = $("anom-note");
   if (mode === "anomaly") {
     const b = state.index.baseline;
+    const what = base === "season"
+      ? `for this station and depth over the cruise's quarter`
+      : `for this station, depth and cruise month`;
     anomNote.textContent =
-      `Departure from the ${b.yr_min}–${b.yr_max} mean for this station, depth ` +
-      `and cruise month — the release's own climatology table (${b.n_cruises} ` +
-      `cruises, at least ${b.min_cruises} cruises per cell). ${pctAnom}% of this section's measurements have ` +
-      `such a baseline; the rest are drawn from neighbouring values and should ` +
-      `not be read closely.` + noBaselineNote(shard, zv, za) + ` See Methods below.`;
+      (swapped ? `No ${base === "season" ? "monthly" : "seasonal"} baseline covers ` +
+                 `this section, so the ${base === "season" ? "seasonal" : "monthly"} ` +
+                 `one is shown. ` : "") +
+      `Departure from the ${baselinePeriod(base, shard.cruise_key)} normal: the ` +
+      `${b.yr_min}–${b.yr_max} mean ${what} — the release's own climatology ` +
+      `table (${b.n_cruises} cruises, at least ${baselineMin(base)} cruises per cell). ` +
+      `${pctAnom}% of this section's measurements have such a baseline; the rest ` +
+      `are drawn from neighbouring values and should not be read closely.` +
+      noBaselineNote(shard, zv, za, base) + ` See Methods below.`;
     anomNote.hidden = false;
   } else if (!hasAnom && sel.mode === "anomaly") {
     anomNote.textContent =
@@ -842,14 +1029,25 @@ async function render(sel) {
   $("ctl-ruler").title = haveLine ? "" :
     "No along-line distances for this line, so the comparable axis is unavailable.";
 
+  // the MLD / chl-max lines: offered where the shard carries any
+  const haveLines = Object.keys(shard.lines || {}).length > 0;
+  $("sel-lines").disabled = !haveLines;
+  $("sel-lines").checked = sel.lines;
+  $("ctl-lines").title = haveLines
+    ? "The cruise's mixed-layer depth and chlorophyll-maximum depth at each station, " +
+      "with their normal for the selected baseline dashed."
+    : "No mixed-layer or chlorophyll-maximum depths for this section" +
+      (shard.data_stage === "preliminary_without_bottle"
+        ? " (both need the bottle merge)." : ".");
+
   // written now, not before the fetch: `mode` may have been downgraded to
   // "value" above, and a URL promising an anomaly that is not on screen is a
   // link that does not reproduce what the sender saw
-  writeURL({ ...sel, mode, ruler: $("sel-ruler").checked ? "line" : "occupied" });
+  writeURL({ ...sel, mode, base, ruler: $("sel-ruler").checked ? "line" : "occupied" });
 
   const maxDepth = Number($("sel-depth").value);
   drawSection(shard, sel.var, maxDepth, mode,
-              $("sel-ruler").checked ? "line" : "occupied");
+              $("sel-ruler").checked ? "line" : "occupied", base, sel.lines && haveLines);
   drawMap(shard);
 
   /* Plotly measures its container at draw time, and on the FIRST render that is
@@ -872,7 +1070,18 @@ function currentSel() {
     var: $("sel-var").value,
     mode: $("sel-mode").value,
     ruler: $("sel-ruler").checked ? "line" : "occupied",
+    base: $("sel-base").value,
+    lines: $("sel-lines").checked,
   };
+}
+
+/* Redraw the section in place (depth slider, theme toggle) with the controls'
+ * current — already resolved — view state. */
+function redrawSection() {
+  if (!state.shard) return;
+  const c = currentSel();
+  drawSection(state.shard, c.var, Number($("sel-depth").value), c.mode, c.ruler,
+              c.base, c.lines && !$("sel-lines").disabled);
 }
 
 /* `citation` is an optional block on data/version.json (WS-A4, written by
@@ -924,6 +1133,8 @@ async function init() {
       // are drawn to answer; ?mode=value asks for the measured field
       mode: url.mode || "anomaly",
       ruler: url.ruler,
+      base: url.base,
+      lines: url.lines,
     };
 
     const b = state.index.baseline;
@@ -977,24 +1188,21 @@ async function init() {
         `enough for one.`;
     }
 
-    for (const id of ["sel-line", "sel-cruise", "sel-var", "sel-mode"]) {
+    for (const id of ["sel-line", "sel-cruise", "sel-var", "sel-mode", "sel-base"]) {
       $(id).addEventListener("change", () => render(currentSel()));
     }
     $("sel-ruler").addEventListener("change", () => render(currentSel()));
+    $("sel-lines").addEventListener("change", () => render(currentSel()));
     $("sel-depth").addEventListener("input", (e) => {
       $("out-depth").textContent = e.target.value;
-      if (state.shard) {
-        const c = currentSel();
-        drawSection(state.shard, c.var, Number(e.target.value), c.mode, c.ruler);
-      }
+      redrawSection();
     });
 
     // the 🌓 toggle (brand/v2/theme.js) announces a change on the document;
     // theme() and scaleFor() are read on every draw, so redrawing is enough
     document.addEventListener("cc:theme", () => {
       if (!state.shard) return;
-      const c = currentSel();
-      drawSection(state.shard, c.var, Number($("sel-depth").value), c.mode, c.ruler);
+      redrawSection();
       drawMap(state.shard);
     });
 

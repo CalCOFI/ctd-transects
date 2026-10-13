@@ -240,6 +240,27 @@ class TestStage(unittest.TestCase):
         (g,) = dr.stage_filter(None, self.grids)
         self.assertEqual(list(g), self.vars)
 
+    def test_cast_lines_follow_the_stage_rule(self):
+        # the per-cast MLD (needs corrected salinity) and chlorophyll-maximum depth
+        # (needs corrected chlorophyll) ride through stage_filter with the matrices:
+        # gone on a CTD-only cruise, kept once the bottle merge has run
+        lines = {v: {"value": [10.0, 20.0, None]} for v in dr.CAST_LINE_VARS}
+        g, ln = dr.stage_filter("preliminary_without_bottle", self.grids, lines)
+        self.assertEqual(ln, {})
+        for stage in ("final", "preliminary_with_bottle"):
+            g, ln = dr.stage_filter(stage, self.grids, lines)
+            self.assertEqual(set(ln), {"mld_sigma_theta_002", "chl_max_depth"}, stage)
+
+    def test_seasonal_anomaly_rides_with_the_variable_rules(self):
+        # a withheld variable leaves the seasonal matrices too, not only the monthly
+        sparse = grid(15, lambda j, i: profile(j, i) if j < 3 else None)
+        grids = {"temperature_ave": grid(15, profile), "oxygen_ml_l_ave_sta_corr": sparse}
+        g, a, an, s, sn, w = dr.apply_variable_rules(grids, dict(grids), dict(grids),
+                                                     dict(grids), dict(grids))
+        self.assertEqual(list(s), ["temperature_ave"])
+        self.assertEqual(list(sn), ["temperature_ave"])
+        self.assertIn("oxygen_ml_l_ave_sta_corr", w)
+
     def test_inputs_are_not_mutated(self):
         dr.stage_filter("preliminary_without_bottle", self.grids)
         self.assertEqual(list(self.grids), self.vars)

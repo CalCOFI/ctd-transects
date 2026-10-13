@@ -279,6 +279,73 @@ class Render(unittest.TestCase):
         with self.assertRaises(SystemExit):
             rr.render("FROM __TBL:climatology:measurement_type=temperature_ave__", CANONICAL)
 
+    # the per-cast MLD / chl-max lines read sample_measurement; a release without the
+    # table reads it as EMPTY (same columns), so the build draws no lines, never fails
+    def test_missing_sample_measurement_is_empty(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            out = rr.render("SELECT * FROM __TBL:sample_measurement__ m;", CANONICAL)
+        self.assertIn("'sample_measurement' is not in the v2026.09.01 catalog", err.getvalue())
+        self.assertIn("no mixed-layer-depth or chlorophyll-maximum lines", err.getvalue())
+        self.assertTrue(out.startswith("SELECT * FROM (SELECT NULL::BIGINT  AS sample_measurement_id,"))
+        self.assertTrue(out.endswith("WHERE FALSE) m;"))
+        for col in ("sample_key", "dataset_key", "measurement_type", "measurement_value",
+                    "measurement_qual"):
+            self.assertIn(f"AS {col}", out)
+
+    def test_present_sample_measurement_is_read(self):
+        cat = json.loads(json.dumps(CANONICAL))
+        cat["tables"].append({
+            "name": "sample_measurement", "rows": 10, "partitioned": False, "supplemental": False,
+            "objects": [{"path": "ducklake/tables/sample_measurement/abc/sample_measurement.parquet",
+                         "bytes": 1, "sha256": "00", "content_hash": "abc", "since": "v2026.10.08"}]})
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            out = rr.render("FROM __TBL:sample_measurement__", cat)
+        self.assertEqual(out, f"FROM read_parquet('{B}/ducklake/tables/sample_measurement/abc/"
+                              "sample_measurement.parquet')")
+        self.assertEqual(err.getvalue(), "")
+
+
+class StagingPrefix(unittest.TestCase):
+    """CALCOFI_RELEASE_PREFIX / CALCOFI_RELEASE_VERSION point the build at a staged
+    candidate (the workflows release-run rule: a staging run is a staging run everywhere)."""
+
+    def setUp(self):
+        self._env = {k: os.environ.pop(k, None)
+                     for k in ("CALCOFI_RELEASE_PREFIX", "CALCOFI_RELEASE_VERSION")}
+        self.fetched = []
+        self._fetch = rr.fetch_text
+        rr.fetch_text = lambda url: (self.fetched.append(url) or
+                                     ("v2026.10.08\n" if url.endswith("latest.txt")
+                                      else json.dumps(CANONICAL)))
+
+    def tearDown(self):
+        rr.fetch_text = self._fetch
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_default_is_the_promoted_releases(self):
+        self.assertEqual(rr.resolve_version(None), "v2026.10.08")
+        rr.fetch_catalog("v2026.10.08")
+        self.assertEqual(self.fetched, [f"{B}/ducklake/releases/latest.txt",
+                                        f"{B}/ducklake/releases/v2026.10.08/catalog.json"])
+
+    def test_staging_prefix_and_version(self):
+        os.environ["CALCOFI_RELEASE_PREFIX"] = "ducklake-staging/releases/"
+        os.environ["CALCOFI_RELEASE_VERSION"] = "v2026.10.13"
+        self.assertEqual(rr.resolve_version(None), "v2026.10.13")
+        rr.fetch_catalog("v2026.10.13")
+        self.assertEqual(self.fetched, [f"{B}/ducklake-staging/releases/v2026.10.13/catalog.json"])
+        # an explicit --version still wins over the environment
+        self.assertEqual(rr.resolve_version("v2026.10.12"), "v2026.10.12")
+
+    def test_staging_prefix_reaches_the_legacy_path(self):
+        os.environ["CALCOFI_RELEASE_PREFIX"] = "ducklake-staging/releases"
+        self.assertEqual(rr.release_sources(LEGACY, "cruise")["urls"],
+                         [f"{B}/ducklake-staging/releases/v2026.08.14/parquet/cruise.parquet"])
+
 
 class RealBuildScript(unittest.TestCase):
     """The checked-in build SQL renders whole against the fixture catalog.

@@ -239,17 +239,49 @@ WHERE c.sta IN (SELECT DISTINCT sta FROM section
 -- sigma_theta_ave and spiciness0 have their own rows under dataset_key =
 -- 'calcofi_ctd-derived' (v2026.10.01: 21,750 cells each over 81 stations, >= 5
 -- cruises), built from the same flag-filtered values drawn here.
-CREATE TEMP TABLE climatology AS
+--
+-- TWO BASELINES, ONE ROW (calcofi4db 4.24.0; Rasmus Swalethorp, 2026-10-06: a toggle
+-- between a monthly and a seasonal baseline). The release appends `quarter` (of the
+-- CRUISE's month: Q1 Jan-Mar ... Q4 Oct-Dec) and `season_mean` / `season_sd` /
+-- `season_n` / `season_n_cruises`, the quarter's own baseline (>= 5 cruises),
+-- repeated on each of its three months — so both are looked up by the same
+-- (station, month, bin, type). A station whose MONTH is below the floor but whose
+-- quarter is not (the northern lines 60-73.3) has a row with clim_mean NULL: a NULL
+-- clim_mean is "no monthly baseline", exactly as an absent row is.
+--
+-- FEATURE-DETECTED. A release cut before 4.24.0 (v2026.10.08, the latest when this
+-- was written) has no season columns, and naming one would fail the build. The empty
+-- typed SELECT unioned BY NAME supplies them as NULL when the release lacks them and
+-- is a no-op when it has them; `has_season` in _baseline.parquet then tells the app
+-- whether to offer the seasonal toggle.
+CREATE TEMP TABLE climatology_all AS
 SELECT dataset_key,
        site_key,
        grid_key,
        month            AS mon,
        depth_bin        AS depth_m,
        measurement_type AS var,
-       clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max
-FROM __TBL:climatology__
+       clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max,
+       COALESCE(quarter, (month - 1) // 3 + 1)::TINYINT AS quarter,
+       season_mean, season_sd, season_n, season_n_cruises
+FROM (SELECT NULL::TINYINT AS quarter,
+             NULL::DOUBLE  AS season_mean,
+             NULL::DOUBLE  AS season_sd,
+             NULL::INTEGER AS season_n,
+             NULL::INTEGER AS season_n_cruises
+      WHERE FALSE
+      UNION ALL BY NAME
+      SELECT * FROM __TBL:climatology__)
 WHERE dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
-  AND measurement_type IN (SELECT DISTINCT var FROM section);
+  -- a row with neither mean is no baseline of either kind
+  AND (clim_mean IS NOT NULL OR season_mean IS NOT NULL);
+
+-- the per-bin cells, for the section field (the per-cast cells, depth_bin NULL, are
+-- read by section_cast below)
+CREATE TEMP TABLE climatology AS
+SELECT * FROM climatology_all
+WHERE depth_m IS NOT NULL
+  AND var IN (SELECT DISTINCT var FROM section);
 
 -- ── the anomaly ──────────────────────────────────────────────────────────────
 -- value - clim_mean, matched on the STATION (site_key, since the release's
@@ -261,10 +293,12 @@ WHERE dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
 -- 93.3 inshore stations (26.4-45, occupied 2026-06-30): they looked up a June
 -- baseline, and no June cruise ran 1993-2013 (Rasmus Swalethorp, 2026-10-06).
 --
--- An INNER join, so a cell with no baseline is ABSENT rather than zero. An
--- unsampled baseline is not a zero anomaly, and collapsing the two is how a plot
+-- An INNER join, so a cell with no baseline of either kind is ABSENT rather than
+-- zero, and within a row each anomaly is NULL where its own mean is (value - NULL).
+-- An unsampled baseline is not a zero anomaly, and collapsing the two is how a plot
 -- ends up colouring "normal" somewhere never measured. The reshaper leaves those
--- cells null and the heatmap leaves them blank.
+-- cells null and the heatmap leaves them blank. `anomaly_season` is the same
+-- departure from the quarter's baseline; NULL throughout on a release without it.
 --
 -- anomaly_sd expresses the departure in baseline standard deviations, which is
 -- what makes 1 degC interpretable: large at 200 m, unremarkable at the surface.
@@ -278,7 +312,10 @@ SELECT s.line, s.cruise_key, s.sta, s.var, s.depth_m,
             THEN ROUND((s.value - cl.clim_mean) / cl.clim_sd, 4) END AS anomaly_sd,
        cl.clim_mean,
        cl.clim_n,
-       cl.n_cruises
+       cl.n_cruises,
+       ROUND(s.value - cl.season_mean, 2) AS anomaly_season,
+       cl.season_mean,
+       cl.season_n_cruises
 FROM section s
 JOIN section_station ss
   ON ss.line = s.line AND ss.cruise_key = s.cruise_key AND ss.sta = s.sta
@@ -288,6 +325,56 @@ JOIN climatology cl
  AND cl.mon      = TRY_CAST(substr(s.cruise_key, 6, 2) AS INTEGER)
  AND cl.depth_m  = s.depth_m
  AND cl.var      = s.var;
+
+-- ── per-cast lines: mixed-layer depth and the chlorophyll maximum ────────────
+-- `calcofi_ctd-derived` also publishes one value per cast in `sample_measurement`
+-- (no depth): the mixed-layer depth and the depth of the chlorophyll maximum, among
+-- others (Rasmus Swalethorp, 2026-10-07: anomalies of the derived products). On a
+-- section they are LINES on the depth axis, one point per station. Two are drawn:
+--   mld_sigma_theta_002 — the headline MLD, CalCOFI's legacy 0.02 kg/m3 criterion
+--                         from 10 m (the 0.125 kg/m3 and 0.2 degC variants are not
+--                         drawn: three MLDs on one plot is a legend, not a reading);
+--   chl_max_depth       — the depth of the chlorophyll maximum.
+-- Same cast and same keying as the field: the rows carry ctd-cast's own sample_key
+-- (the derived dataset publishes no sample rows), so they join `ctd_cast` on it and
+-- take its station, cruise and data_stage. Same quality predicate as the field
+-- (CTD 8/9 out, 4 is a value; derived rows carry no flag today).
+--
+-- Their normals are the per-cast cells of the same `climatology` table
+-- (build_climatology(cast_types = ...), calcofi4db 4.24.0): depth_bin IS NULL — "a
+-- per-cast value, never a depth" — so they are matched with IS NULL, never `=`, and
+-- the per-bin join above can never pick one up. A LEFT join: the line is drawn
+-- whatever the baseline, the dashed normal only where there is one. On a release
+-- without per-cast cells (v2026.10.08) the normals are NULL and only the lines draw.
+CREATE TEMP TABLE cast_value AS
+SELECT c.line, c.cruise_key, c.sta, c.site_key,
+       m.dataset_key,
+       m.measurement_type AS var,
+       ROUND(AVG(m.measurement_value), 2) AS value
+FROM __TBL:sample_measurement__ m
+JOIN ctd_cast c USING (sample_key)
+WHERE m.dataset_key = 'calcofi_ctd-derived'
+  AND m.measurement_type IN ('mld_sigma_theta_002', 'chl_max_depth')
+  AND m.measurement_value IS NOT NULL AND isfinite(m.measurement_value)
+  AND NOT COALESCE(regexp_replace(m.measurement_qual, '\.0+$', '') IN ('8', '9'), FALSE)
+GROUP BY ALL;
+
+CREATE TEMP TABLE section_cast AS
+SELECT v.line, v.cruise_key, v.sta, v.var, v.value,
+       ROUND(cl.clim_mean, 2)   AS clim_mean,
+       cl.n_cruises,
+       ROUND(cl.season_mean, 2) AS season_mean,
+       cl.season_n_cruises
+FROM cast_value v
+-- only stations the section draws: a cast with a line value but no field is not on it
+JOIN section_station ss
+  ON ss.line = v.line AND ss.cruise_key = v.cruise_key AND ss.sta = v.sta
+LEFT JOIN climatology_all cl
+  ON cl.dataset_key = v.dataset_key
+ AND cl.site_key    = v.site_key
+ AND cl.mon         = TRY_CAST(substr(v.cruise_key, 6, 2) AS INTEGER)
+ AND cl.depth_m IS NULL
+ AND cl.var         = v.var;
 
 -- ── cruise labels ────────────────────────────────────────────────────────────
 CREATE TEMP TABLE cruise AS
@@ -307,6 +394,7 @@ WHERE measurement_type IN (SELECT DISTINCT var FROM section);
 COPY section         TO 'public/data/_sections.parquet'  (FORMAT PARQUET);
 COPY section_station TO 'public/data/_stations.parquet'  (FORMAT PARQUET);
 COPY section_anomaly TO 'public/data/_anomaly.parquet'   (FORMAT PARQUET);
+COPY section_cast    TO 'public/data/_cast.parquet'      (FORMAT PARQUET);
 COPY cruise          TO 'public/data/_cruises.parquet'   (FORMAT PARQUET);
 COPY variable        TO 'public/data/_variables.parquet' (FORMAT PARQUET);
 COPY (SELECT * FROM station) TO 'public/data/_grid.parquet' (FORMAT PARQUET);
@@ -316,11 +404,21 @@ COPY (SELECT * FROM station) TO 'public/data/_grid.parquet' (FORMAT PARQUET);
 -- averaged over
 COPY (SELECT any_value(clim_yr_min)           AS yr_min,
              any_value(clim_yr_max)           AS yr_max,
+             -- a monthly cell is a row WITH a monthly mean; a season-only row
+             -- (clim_mean NULL) is not one
              min(n_cruises)                   AS min_cruises,
-             count(*)                         AS n_cells,
+             count(clim_mean)                 AS n_cells,
              (SELECT count(DISTINCT cruise_key) FROM ctd_cast
               WHERE year(datetime) BETWEEN (SELECT any_value(clim_yr_min) FROM climatology)
-                                       AND (SELECT any_value(clim_yr_max) FROM climatology)) AS n_cruises
+                                       AND (SELECT any_value(clim_yr_max) FROM climatology)) AS n_cruises,
+             -- the seasonal baseline (calcofi4db 4.24.0): has_season is the app's
+             -- feature flag for the monthly / seasonal toggle
+             count(season_mean) > 0           AS has_season,
+             min(season_n_cruises)            AS season_min_cruises,
+             count(season_mean)               AS n_season_cells,
+             -- per-cast normals (depth_bin NULL) behind the dashed MLD / chl-max lines
+             (SELECT count(*) FROM section_cast
+              WHERE clim_mean IS NOT NULL OR season_mean IS NOT NULL) > 0 AS has_cast_normal
       FROM climatology)
      TO 'public/data/_baseline.parquet' (FORMAT PARQUET);
 
@@ -330,7 +428,11 @@ SELECT '__RELEASE__'                                         AS release,
        (SELECT count(DISTINCT var) FROM section)             AS n_variables,
        (SELECT count(DISTINCT cruise_key) FROM section)      AS n_cruises,
        (SELECT count(*) FROM climatology)                    AS n_clim_cells,
-       (SELECT count(*) FROM section_anomaly)                AS n_anomalies,
+       (SELECT count(anomaly) FROM section_anomaly)          AS n_anomalies,
+       (SELECT count(anomaly_season) FROM section_anomaly)   AS n_anomalies_season,
+       (SELECT count(*) FROM section_cast)                   AS n_cast_values,
+       (SELECT count(clim_mean) FROM section_cast)           AS n_cast_normals,
+       (SELECT count(season_mean) FROM section_cast)         AS n_cast_normals_season,
        -- derived values dropped because an input was flagged: 0 unless the release
        -- broke the ctd-derived ingest's own flag rule (see derived_blocked)
        (SELECT count(*) FROM ctd_obs o
@@ -341,5 +443,8 @@ SELECT '__RELEASE__'                                         AS release,
        -- what fraction of section values HAVE a baseline; a sharp drop here means
        -- either the baseline window missed the release's coverage or a station is
        -- newly sampled, and either way the anomaly view will be mostly blank
-       ROUND(100.0 * (SELECT count(*) FROM section_anomaly)
-                   / (SELECT count(*) FROM section), 1)      AS pct_with_baseline;
+       -- (non-NULL anomalies: a season-only row has no monthly baseline)
+       ROUND(100.0 * (SELECT count(anomaly) FROM section_anomaly)
+                   / (SELECT count(*) FROM section), 1)      AS pct_with_baseline,
+       ROUND(100.0 * (SELECT count(anomaly_season) FROM section_anomaly)
+                   / (SELECT count(*) FROM section), 1)      AS pct_with_season;

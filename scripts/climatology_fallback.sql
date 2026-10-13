@@ -12,6 +12,11 @@
 -- The month is the cruise's designated month (MM of cruise_key YYYY-MM-NODC), not the
 -- cast's calendar month: a cast occupied on the last day of June for a July cruise
 -- belongs to the July baseline. The year window stays on year(datetime).
+-- Monthly arm only: no `quarter` / `season_*` columns (build_sections.sql supplies them
+-- as NULL, so the app offers no seasonal toggle) and no per-cast cells (depth_bin NULL),
+-- so the MLD / chl-max lines draw without normals. Every row passes the cruise floor,
+-- so clim_mean is never NULL here; the build treats a NULL clim_mean as no baseline
+-- regardless, as the release table (calcofi4db 4.24.0) can carry one.
 -- Restricted to the two CTD datasets this app reads (ctd-cast, and ctd-derived where the
 -- release has it); the release table carries every env dataset. Delete this file once every release this app
 -- can be pointed at ships the table.

@@ -90,6 +90,15 @@
       <option value="anomaly">Anomaly vs climatology</option>
     </select>
   </label>
+  <!-- the baseline an anomaly (and a dashed normal line) departs from: the cruise's
+       month, or its quarter where the release ships one (?base=season) -->
+  <label class="ctl" id="ctl-base">
+    <span>Baseline</span>
+    <select id="sel-base">
+      <option value="month">Monthly normal</option>
+      <option value="season">Seasonal normal</option>
+    </select>
+  </label>
   <label class="ctl ctl-depth">
     <span>Max depth <output id="out-depth">500</output> m</span>
     <input id="sel-depth" type="range" min="50" max="500" step="50" value="500">
@@ -98,6 +107,13 @@
     <input id="sel-ruler" type="checkbox">
     <span>Comparable x-axis
       <abbr title="Draw the section against the full length of the line rather than only the stations this cruise occupied, so cruises covering different extents are comparable in width.">?</abbr>
+    </span>
+  </label>
+  <!-- the per-cast mixed-layer depth and chlorophyll-maximum depth (?lines=off hides) -->
+  <label class="ctl ctl-check" id="ctl-lines">
+    <input id="sel-lines" type="checkbox" checked>
+    <span>MLD &amp; chl-max lines
+      <abbr title="The cruise's mixed-layer depth and depth of the chlorophyll maximum at each station, drawn over the section, with their normal for the selected baseline dashed in the same colour.">?</abbr>
     </span>
   </label>
   <div class="spacer"></div>
@@ -197,6 +213,18 @@
       release, so it is the same one the CalCOFI Explorer subtracts.
     </p>
     <p>
+      <strong>Monthly or seasonal.</strong> The <em>Baseline</em> control swaps the
+      cruise month's normal for its <strong>quarter's</strong> (January–March,
+      April–June, July–September, October–December, of the cruise's designated
+      month): the same station, depth and years, pooled over three months and held
+      to the same minimum number of cruises. It is coarser, and it fills stations
+      whose month is too thin to have a baseline of its own — the northern lines
+      60–73.3, where winter and spring cruises are split across January to April.
+      The caption under the plot names the normal in view ("July normal" or
+      "Jul–Sep normal"). Releases cut before the seasonal baseline was added offer
+      the monthly one only.
+    </p>
+    <p>
       Rudnick et&nbsp;al. (2017) fit annual and semiannual harmonics for the
       <a href="https://spraydata.ucsd.edu/products/cugn-climatology/">CUGN glider
       climatology</a>, which suits near-continuous glider sampling. CalCOFI's is
@@ -246,6 +274,22 @@
       centred on zero. A flagged temperature or salinity never enters either.
       Both need bottle-corrected salinity, so neither is drawn on a CTD-only
       cruise.
+    </p>
+
+    <h3>Mixed-layer depth and the chlorophyll maximum</h3>
+    <p>
+      The two lines over the section are per-cast values from the
+      <a href="https://calcofi.io/datasets/calcofi_ctd-derived/">CTD-derived
+      dataset ↗</a>: the <strong>mixed-layer depth</strong>, by CalCOFI's
+      long-standing criterion (the depth where potential density first exceeds its
+      10&nbsp;m value by 0.02&nbsp;kg/m³), and the <strong>depth of the chlorophyll
+      maximum</strong>. Each is one number per cast, so the line joins stations and
+      breaks where a station has none. The dashed line of the same colour is its
+      normal for this station and the selected baseline — the per-cast cells of the
+      same <code>climatology</code> table, over the same years — and hovering a
+      point gives the value, the normal and the difference. Both need
+      bottle-corrected salinity or chlorophyll, so neither is drawn on a CTD-only
+      cruise; a release without per-cast normals draws the solid lines alone.
     </p>
 
     <h3>Processing stage</h3>

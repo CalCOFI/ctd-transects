@@ -23,7 +23,9 @@ Skipped where no duckdb CLI is on PATH.
     python3 scripts/test_build_sections_sql.py
 """
 
+import contextlib
 import glob
+import io
 import json
 import os
 import shutil
@@ -135,19 +137,56 @@ UNION ALL SELECT * FROM (VALUES
   ('calcofi_ctd-cast:cast:2607_030d', '2026-07-3322', 1.0, 1.0, 'temperature_ave', 17.0, NULL, 'calcofi_ctd-cast'),
   ('calcofi_ctd-cast:cast:2607_040d', '2026-07-3322', 1.0, 1.0, 'temperature_ave', 17.5, NULL, 'calcofi_ctd-cast'));
 
+-- the release's climatology as calcofi4db 4.24.0 writes it: the season columns after
+-- clim_yr_max, a season-only row (clim_mean NULL), and per-cast cells (depth_bin NULL)
 CREATE TABLE climatology AS SELECT * FROM (VALUES
-  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',      0.05, 0.1, 40, 12),
-  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',    100.0,  0.1, 40, 12),  -- decoy
-  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'sigma_theta_ave', 24.5, 0.2, 40, 12),
-  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'temperature_ave', 14.0, 0.5, 40, 12),
-  -- station 30: July (the cruise's month) and a June decoy; station 40: June only
-  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 7, 0, 'temperature_ave', 16.0, 0.5, 40, 12),
-  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 6, 0, 'temperature_ave', 99.0, 0.5, 40, 12),
-  ('calcofi_ctd-cast',    '093.3 040.0', 'st40-ln93.3', 6, 0, 'temperature_ave', 15.0, 0.5, 40, 12))
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',      0.05, 0.1, 40, 12, NULL::DOUBLE, NULL::INT),
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',    100.0,  0.1, 40, 12, NULL, NULL),  -- decoy
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'sigma_theta_ave', 24.5, 0.2, 40, 12, NULL, NULL),
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'temperature_ave', 14.0, 0.5, 40, 12, 14.5, 30),
+  -- station 30: July (the cruise's month, Q3 normal 15.5) and a June decoy
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 7, 0, 'temperature_ave', 16.0, 0.5, 40, 12, 15.5, 30),
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 6, 0, 'temperature_ave', 99.0, 0.5, 40, 12, NULL, NULL),
+  -- station 40: a June monthly cell, and a July row with NO monthly mean (July is
+  -- below the cruise floor, Q3 passes): no monthly baseline, a seasonal one
+  ('calcofi_ctd-cast',    '093.3 040.0', 'st40-ln93.3', 6, 0, 'temperature_ave', 15.0, 0.5, 40, 12, NULL, NULL),
+  ('calcofi_ctd-cast',    '093.3 040.0', 'st40-ln93.3', 7, 0, 'temperature_ave', NULL, NULL, NULL, NULL, 16.5, 9),
+  -- per-cast cells (depth_bin NULL) for the lines: station 30 April both normals,
+  -- station 50 April season only
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, NULL, 'mld_sigma_theta_002', 20.0, 5.0, 30, 10, 22.0, 15),
+  ('calcofi_ctd-derived', '093.3 050.0', 'st50-ln93.3', 4, NULL, 'mld_sigma_theta_002', NULL, NULL, NULL, NULL, 33.0, 6),
+  -- decoy: a per-BIN mld cell, which a per-cast value must never match
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'mld_sigma_theta_002', 999.0, 1.0, 30, 10, 999.0, 15))
   t(dataset_key, site_key, grid_key, month, depth_bin, measurement_type,
-    clim_mean, clim_sd, clim_n, n_cruises);
+    clim_mean, clim_sd, clim_n, n_cruises, season_mean, season_n_cruises);
 ALTER TABLE climatology ADD COLUMN clim_yr_min SMALLINT DEFAULT 1993;
 ALTER TABLE climatology ADD COLUMN clim_yr_max SMALLINT DEFAULT 2013;
+CREATE TABLE climatology_v2 AS
+SELECT dataset_key, site_key, grid_key, month::TINYINT AS month, depth_bin::INTEGER AS depth_bin,
+       measurement_type, clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max,
+       ((month - 1) // 3 + 1)::TINYINT AS quarter,
+       season_mean, CASE WHEN season_mean IS NOT NULL THEN 0.4 END AS season_sd,
+       CASE WHEN season_mean IS NOT NULL THEN 90 END AS season_n, season_n_cruises
+FROM climatology;
+-- the same table as a release cut before calcofi4db 4.24.0 (v2026.10.08) ships it:
+-- no season columns, no season-only rows, no per-cast cells
+CREATE TABLE climatology_v1 AS
+SELECT dataset_key, site_key, grid_key, month::TINYINT AS month, depth_bin::INTEGER AS depth_bin,
+       measurement_type, clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max
+FROM climatology WHERE clim_mean IS NOT NULL AND depth_bin IS NOT NULL;
+
+-- per-cast values (calcofi_ctd-derived in sample_measurement, keyed by the ctd-cast cast)
+CREATE TABLE sample_measurement AS SELECT * FROM (VALUES
+  (1, 'calcofi_ctd-cast:cast:2504_030d', 'calcofi_ctd-derived', 'mld_sigma_theta_002',  25.0, NULL),
+  (2, 'calcofi_ctd-cast:cast:2504_030d', 'calcofi_ctd-derived', 'chl_max_depth',        40.0, NULL),
+  (3, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'mld_sigma_theta_002',  30.0, NULL),
+  (4, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'chl_max_depth',        55.0, '9.0'),  -- flagged
+  (5, 'calcofi_ctd-cast:cast:2504_050d', 'calcofi_ctd-derived', 'mld_sigma_theta_002',  35.0, '4'),    -- 4 is a value
+  (6, 'calcofi_ctd-cast:cast:2504_050d', 'calcofi_ctd-derived', 'mld_sigma_theta_0125', 20.0, NULL),   -- not drawn
+  (7, 'calcofi_ctd-cast:cast:2504_050d', 'calcofi_ctd-derived', 'chl_max',               2.1, NULL),   -- not drawn
+  (8, 'calcofi_ctd-cast:cast:2504_902d', 'calcofi_ctd-derived', 'mld_sigma_theta_002',  10.0, NULL),   -- on no line
+  (9, 'calcofi_ctd-cast:cast:2504_030d', 'swfsc_ichthyo',       'mld_sigma_theta_002', 500.0, NULL))   -- other dataset
+  t(sample_measurement_id, sample_key, dataset_key, measurement_type, measurement_value, measurement_qual);
 
 CREATE TABLE cruise AS SELECT * FROM (VALUES ('2025-04-3322', '33RL'), ('2026-07-3322', '33RL'))
   t(cruise_key, ship_key);
@@ -166,15 +205,30 @@ COPY cruise           TO 'fx/ducklake/tables/cruise/h/cruise.parquet' (FORMAT PA
 COPY ship             TO 'fx/ducklake/tables/ship/h/ship.parquet' (FORMAT PARQUET);
 COPY measurement_type TO 'fx/ducklake/tables/measurement_type/h/measurement_type.parquet' (FORMAT PARQUET);
 COPY obs              TO 'fx/ducklake/tables/obs' (FORMAT PARQUET, PARTITION_BY (dataset_key));
-COPY climatology      TO 'fx/ducklake/tables/climatology' (FORMAT PARQUET, PARTITION_BY (measurement_type));
+COPY sample_measurement TO 'fx/ducklake/tables/sample_measurement/h/sample_measurement.parquet' (FORMAT PARQUET);
+COPY climatology_{clim} TO 'fx/ducklake/tables/climatology' (FORMAT PARQUET, PARTITION_BY (measurement_type));
 """
 
+# The three release shapes the build must take:
+#   next  — calcofi4db 4.24.0: season columns, season-only rows, per-cast cells
+#   v1008 — v2026.10.08 (the latest when written): no season columns or per-cast
+#           cells, but sample_measurement already carries the per-cast values
+#   old   — a release with no sample_measurement table at all
+RELEASES = {
+    "next":  {"clim": "v2", "tables": None},
+    "v1008": {"clim": "v1", "tables": None},
+    "old":   {"clim": "v1", "tables": ["grid", "sample", "cruise", "ship", "measurement_type",
+                                       "obs", "climatology"]},
+}
+ALL_TABLES = ["grid", "sample", "cruise", "ship", "measurement_type", "obs",
+              "sample_measurement", "climatology"]
 
-def fixture_catalog(root):
+
+def fixture_catalog(root, names=None):
     """The release catalog shape (objects[] per table) over the files in root/fx."""
     tables = []
     base = os.path.join(root, "fx")
-    for name in ["grid", "sample", "cruise", "ship", "measurement_type", "obs", "climatology"]:
+    for name in names or ALL_TABLES:
         files = sorted(glob.glob(os.path.join(base, "ducklake", "tables", name, "**", "*.parquet"),
                                recursive=True))
         objs = []
@@ -202,27 +256,47 @@ def rows(cwd, sql):
     return json.loads(out) if out else []
 
 
+def build_fixture(release):
+    """Write the fixture in one release shape, render + run the real build SQL.
+
+    Returns (TemporaryDirectory, its path, the build's summary row)."""
+    spec = RELEASES[release]
+    tmp = tempfile.TemporaryDirectory()
+    d = tmp.name
+    for t in ["grid", "sample", "cruise", "ship", "measurement_type", "sample_measurement"]:
+        os.makedirs(os.path.join(d, "fx", "ducklake", "tables", t, "h"))
+    os.makedirs(os.path.join(d, "public", "data"))
+    duck(d, FIXTURE_SQL.replace("{clim}", spec["clim"]))
+    with open(os.path.join(SCRIPTS_DIR, "build_sections.sql")) as f, \
+            contextlib.redirect_stderr(io.StringIO()):
+        sql = rr.render(f.read(), fixture_catalog(d, spec["tables"]))
+    # the rendered SQL names https objects in the bucket; point it at the fixture
+    sql = sql.replace(rr.BUCKET_HTTPS + "/", os.path.join(d, "fx") + "/")
+    with open(os.path.join(d, "build_sections.sql"), "w") as f:
+        f.write(sql)
+    return tmp, d, rows(d, ".read build_sections.sql")[-1]
+
+
 @unittest.skipUnless(DUCKDB, "duckdb CLI not on PATH")
 class BuildSectionsSQL(unittest.TestCase):
+    RELEASE = "next"
+
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        d = cls.d = cls.tmp.name
-        for t in ["grid", "sample", "cruise", "ship", "measurement_type"]:
-            os.makedirs(os.path.join(d, "fx", "ducklake", "tables", t, "h"))
-        os.makedirs(os.path.join(d, "public", "data"))
-        duck(d, FIXTURE_SQL)
-        with open(os.path.join(SCRIPTS_DIR, "build_sections.sql")) as f:
-            sql = rr.render(f.read(), fixture_catalog(d))
-        # the rendered SQL names https objects in the bucket; point it at the fixture
-        sql = sql.replace(rr.BUCKET_HTTPS + "/", os.path.join(d, "fx") + "/")
-        with open(os.path.join(d, "build_sections.sql"), "w") as f:
-            f.write(sql)
-        cls.summary = rows(d, ".read build_sections.sql")[-1]
+        cls.tmp, cls.d, cls.summary = build_fixture(cls.RELEASE)
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+
+    def cast(self, cruise=CRUISE):
+        return rows(self.d, "SELECT var, sta, value::DOUBLE AS value, clim_mean::DOUBLE AS clim_mean, "
+                            "n_cruises, season_mean::DOUBLE AS season_mean, season_n_cruises "
+                            f"FROM 'public/data/_cast.parquet' WHERE cruise_key = '{cruise}' "
+                            "ORDER BY var, sta")
+
+    def baseline(self):
+        return rows(self.d, "SELECT * FROM 'public/data/_baseline.parquet'")[0]
 
     def section(self, where="TRUE", cruise=CRUISE):
         return rows(self.d, "SELECT dataset_key, var, sta, depth_m, value "
@@ -275,7 +349,7 @@ class BuildSectionsSQL(unittest.TestCase):
         # against its JULY baseline (16.0), never the June decoy (99.0); station
         # 40 has only a June baseline, so it gets no anomaly at all
         a = rows(self.d, "SELECT sta, depth_m, anomaly, clim_mean::DOUBLE AS clim_mean FROM 'public/data/_anomaly.parquet' "
-                         "WHERE cruise_key = '2026-07-3322' ORDER BY sta")
+                         "WHERE cruise_key = '2026-07-3322' AND anomaly IS NOT NULL ORDER BY sta")
         self.assertEqual(a, [{"sta": 30.0, "depth_m": 0, "anomaly": 1.0, "clim_mean": 16.0}])
         # both stations are still drawn in the value view
         self.assertEqual(len(self.section("var = 'temperature_ave'", cruise="2026-07-3322")), 2)
@@ -302,6 +376,122 @@ class BuildSectionsSQL(unittest.TestCase):
     def test_variable_labels_cover_the_derived_types(self):
         v = {r["var"] for r in rows(self.d, "SELECT var FROM 'public/data/_variables.parquet'")}
         self.assertEqual(v, {"temperature_ave", "salinity_ave_corr", "sigma_theta_ave", "spiciness0"})
+
+    # ── the seasonal baseline (calcofi4db 4.24.0) ────────────────────────────────
+
+    def test_null_clim_mean_is_no_monthly_baseline(self):
+        # station 40, July: the month is below the cruise floor (clim_mean NULL), the
+        # quarter is not — the row is there, its monthly anomaly is NULL, never value - 0
+        a = rows(self.d, "SELECT sta, anomaly, n_cruises, anomaly_season, season_n_cruises "
+                         "FROM 'public/data/_anomaly.parquet' "
+                         "WHERE cruise_key = '2026-07-3322' ORDER BY sta")
+        self.assertEqual(a, [
+            {"sta": 30.0, "anomaly": 1.0,  "n_cruises": 12,   "anomaly_season": 1.5, "season_n_cruises": 30},
+            {"sta": 40.0, "anomaly": None, "n_cruises": None, "anomaly_season": 1.0, "season_n_cruises": 9},
+        ])
+
+    def test_season_columns_are_read(self):
+        a = rows(self.d, "SELECT var, sta, anomaly, anomaly_season, season_mean::DOUBLE AS season_mean "
+                         "FROM 'public/data/_anomaly.parquet' "
+                         f"WHERE cruise_key = '{CRUISE}' ORDER BY var")
+        self.assertEqual(a[-1], {"var": "temperature_ave", "sta": 30.0, "anomaly": 1.0,
+                                 "anomaly_season": 0.5, "season_mean": 14.5})
+        # a cell with a monthly baseline and no seasonal one keeps its monthly anomaly
+        self.assertEqual(a[0]["var"], "sigma_theta_ave")
+        self.assertEqual((a[0]["anomaly"], a[0]["anomaly_season"]), (0.1, None))
+
+    def test_percent_with_baseline_counts_non_null_means(self):
+        # 2026-07: 2 values, 1 monthly baseline (station 40 has a NULL mean), 2
+        # seasonal; 2025-04: 3 monthly, 1 seasonal — 4 monthly, not the 5 joined rows
+        self.assertEqual(self.summary["n_anomalies"], 4)
+        self.assertEqual(self.summary["n_anomalies_season"], 3)
+        n_section = rows(self.d, "SELECT count(*) AS n FROM 'public/data/_sections.parquet'")[0]["n"]
+        self.assertEqual(self.summary["pct_with_baseline"], round(100.0 * 4 / n_section, 1))
+
+    def test_baseline_flags(self):
+        b = self.baseline()
+        self.assertTrue(b["has_season"])
+        self.assertTrue(b["has_cast_normal"])
+        # monthly cells are rows with a monthly mean (station 40's July row is not one)
+        self.assertEqual(b["n_cells"], 7)
+        self.assertEqual(b["n_season_cells"], 3)
+        self.assertEqual(b["season_min_cruises"], 9)
+
+    # ── per-cast lines: MLD and chlorophyll-maximum depth ───────────────────────
+
+    def test_cast_lines_values_and_normals(self):
+        self.assertEqual(self.cast(), [
+            # no per-cast cell for chl_max_depth at all: the line draws, no normal
+            {"var": "chl_max_depth", "sta": 30.0, "value": 40.0, "clim_mean": None,
+             "n_cruises": None, "season_mean": None, "season_n_cruises": None},
+            # the per-cast cell (depth_bin NULL), never the per-bin decoy (999)
+            {"var": "mld_sigma_theta_002", "sta": 30.0, "value": 25.0, "clim_mean": 20.0,
+             "n_cruises": 10, "season_mean": 22.0, "season_n_cruises": 15},
+            {"var": "mld_sigma_theta_002", "sta": 40.0, "value": 30.0, "clim_mean": None,
+             "n_cruises": None, "season_mean": None, "season_n_cruises": None},
+            # qual 4 is a value; a season-only cell gives a seasonal normal alone
+            {"var": "mld_sigma_theta_002", "sta": 50.0, "value": 35.0, "clim_mean": None,
+             "n_cruises": None, "season_mean": 33.0, "season_n_cruises": 6},
+        ])
+
+    def test_cast_lines_drop_flags_other_types_other_datasets_and_off_line_casts(self):
+        got = self.cast()
+        # chl_max_depth at station 40 is flagged 9.0
+        self.assertNotIn(("chl_max_depth", 40.0), [(r["var"], r["sta"]) for r in got])
+        # only the two drawn types, only calcofi_ctd-derived (the 500 m decoy)
+        self.assertEqual({r["var"] for r in got}, {"mld_sigma_theta_002", "chl_max_depth"})
+        self.assertNotIn(500.0, [r["value"] for r in got])
+        # 88.5 30.1 is on no line
+        self.assertNotIn(30.1, [r["sta"] for r in got])
+        self.assertEqual(self.summary["n_cast_values"], 4)
+
+
+@unittest.skipUnless(DUCKDB, "duckdb CLI not on PATH")
+class V1008Release(BuildSectionsSQL):
+    """v2026.10.08 (the latest when written): no season columns, no per-cast cells, but
+    sample_measurement already carries the values — no toggle, lines without normals."""
+    RELEASE = "v1008"
+
+    def test_null_clim_mean_is_no_monthly_baseline(self):
+        a = rows(self.d, "SELECT sta, anomaly, anomaly_season FROM 'public/data/_anomaly.parquet' "
+                         "WHERE cruise_key = '2026-07-3322' ORDER BY sta")
+        self.assertEqual(a, [{"sta": 30.0, "anomaly": 1.0, "anomaly_season": None}])
+
+    def test_season_columns_are_read(self):
+        a = rows(self.d, "SELECT count(anomaly_season) AS n FROM 'public/data/_anomaly.parquet'")
+        self.assertEqual(a, [{"n": 0}])
+
+    def test_percent_with_baseline_counts_non_null_means(self):
+        self.assertEqual(self.summary["n_anomalies"], 4)
+        self.assertEqual(self.summary["n_anomalies_season"], 0)
+
+    def test_baseline_flags(self):
+        b = self.baseline()
+        self.assertFalse(b["has_season"])
+        self.assertFalse(b["has_cast_normal"])
+        self.assertEqual(b["n_cells"], 7)
+        self.assertEqual(b["n_season_cells"], 0)
+        self.assertIsNone(b["season_min_cruises"])
+
+    def test_cast_lines_values_and_normals(self):
+        got = self.cast()
+        self.assertEqual([(r["var"], r["sta"], r["value"]) for r in got], [
+            ("chl_max_depth", 30.0, 40.0), ("mld_sigma_theta_002", 30.0, 25.0),
+            ("mld_sigma_theta_002", 40.0, 30.0), ("mld_sigma_theta_002", 50.0, 35.0)])
+        self.assertTrue(all(r["clim_mean"] is None and r["season_mean"] is None for r in got))
+
+
+@unittest.skipUnless(DUCKDB, "duckdb CLI not on PATH")
+class OldRelease(V1008Release):
+    """A release with no sample_measurement table: the build reads it as empty
+    (scripts/sample_measurement_fallback.sql) and draws no lines."""
+    RELEASE = "old"
+
+    def test_cast_lines_values_and_normals(self):
+        self.assertEqual(self.cast(), [])
+
+    def test_cast_lines_drop_flags_other_types_other_datasets_and_off_line_casts(self):
+        self.assertEqual(self.summary["n_cast_values"], 0)
 
 
 if __name__ == "__main__":

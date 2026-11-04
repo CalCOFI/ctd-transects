@@ -91,7 +91,7 @@
     </select>
   </label>
   <!-- the baseline an anomaly (and a dashed normal line) departs from: the cruise's
-       month, or its quarter where the release ships one (?base=season) -->
+       month (its median cast month), or its season where the release ships one (?base=season) -->
   <label class="ctl" id="ctl-base">
     <span>Baseline</span>
     <select id="sel-base">
@@ -214,9 +214,10 @@
     </p>
     <p>
       <strong>Monthly or seasonal.</strong> The <em>Baseline</em> control swaps the
-      cruise month's normal for its <strong>quarter's</strong> (January–March,
-      April–June, July–September, October–December, of the cruise's designated
-      month): the same station, depth and years, pooled over three months and held
+      cruise month's normal for its <strong>season's</strong> (December–February,
+      March–May, June–August, September–November, of the cruise's month — the
+      month of its median cast date, with December counted toward the following
+      winter): the same station, depth and years, pooled over three months and held
       to the same minimum number of cruises. It is coarser, and it fills stations
       whose month is too thin to have a baseline of its own — the northern lines
       60–73.3, where winter and spring cruises are split across January to April.

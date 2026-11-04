@@ -47,8 +47,10 @@ ANOMALY
     station x cruise month x 10 m bin, 1993-2013, >= 5 cruises) — the same
     baseline the CalCOFI Explorer subtracts. Cells with no baseline are null, never 0.
     Beside it, `anom_season` / `anom_season_n` are the departure from the cruise
-    quarter's baseline (calcofi4db 4.24.0, the app's monthly / seasonal toggle); a
-    release without season columns ships them empty and index.json's
+    season's baseline (calcofi4db 4.24.0, the app's monthly / seasonal toggle; the
+    seasons are DJF / MAM / JJA / SON since release v2026.11, and the cruise's month
+    is its median cast month, carried on each shard as `month` / `quarter` /
+    `season`); a release without season columns ships them empty and index.json's
     `baseline.has_season` is false.
 
 PER-CAST LINES
@@ -287,7 +289,7 @@ def cast_lines(gc, sta_ix, n_sta):
     """{var: {value, month, season, n_month, n_season}} — one list entry per station.
 
     `month` / `season` are the per-cast normals (the climatology's depth_bin-NULL
-    cells) for the cruise's month and quarter, null where there is none; a variable
+    cells) for the cruise's month and season, null where there is none; a variable
     with no value at any station is left out.
     """
     out = {}
@@ -371,6 +373,16 @@ def main():
                       in zip(sta["line_s"], sta["line_dist_km"], sta["grid_key"])]
 
     ship = dict(zip(cru["cruise_key"], cru["ship_name"].fillna("")))
+    # the cruise's month and season (build_sections.sql `cruise`: the release's median cast
+    # month, month_median, v2026.11+; the key's MM before; quarter 1 = DJF ... 4 = SON,
+    # season_year with December in the following winter) — stamped on every shard and
+    # index entry so the app never parses the cruise_key for them
+    cru_meta = {r.cruise_key: {"month": _num(r.month, as_int=True),
+                               "quarter": _num(r.quarter, as_int=True),
+                               "season": (r.season if isinstance(r.season, str) else None),
+                               "season_year": _num(r.season_year, as_int=True)}
+                for r in cru.itertuples(index=False)}
+    no_meta = {"month": None, "quarter": None, "season": None, "season_year": None}
 
     stages = set(sta["data_stage"].dropna().unique())
     unknown = stages - KNOWN_STAGES
@@ -495,9 +507,14 @@ def main():
         if not section_is_drawable(n_sta, grids):
             n_skipped["variables"] += 1
             continue
+        meta = cru_meta.get(cruise_key, no_meta)
         shard = {
             "line": line_s,
             "cruise_key": cruise_key,
+            # the cruise's month and season (see cru_meta): what the baseline is the normal OF
+            "month": meta["month"],
+            "quarter": meta["quarter"],
+            "season": meta["season"],
             "data_stage": (stage.iloc[0] if len(stage) else None),
             "stations": stations,
             "depths": DEPTHS,
@@ -519,6 +536,10 @@ def main():
         index_lines[line_s][cruise_key] = {
             "cruise_key": cruise_key,
             "ship": ship.get(cruise_key, ""),
+            "month": meta["month"],
+            "quarter": meta["quarter"],
+            "season": meta["season"],
+            "season_year": meta["season_year"],
             "data_stage": shard["data_stage"],
             "n_stations": n_sta,
             "vars": sorted(grids.keys()),

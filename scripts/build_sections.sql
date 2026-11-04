@@ -241,13 +241,15 @@ WHERE c.sta IN (SELECT DISTINCT sta FROM section
 -- cruises), built from the same flag-filtered values drawn here.
 --
 -- TWO BASELINES, ONE ROW (calcofi4db 4.24.0; Rasmus Swalethorp, 2026-10-06: a toggle
--- between a monthly and a seasonal baseline). The release appends `quarter` (of the
--- CRUISE's month: Q1 Jan-Mar ... Q4 Oct-Dec) and `season_mean` / `season_sd` /
--- `season_n` / `season_n_cruises`, the quarter's own baseline (>= 5 cruises),
--- repeated on each of its three months — so both are looked up by the same
+-- between a monthly and a seasonal baseline). The release appends `quarter` (the
+-- season of the CRUISE's month: 1 = DJF, 2 = MAM, 3 = JJA, 4 = SON since release
+-- v2026.11 / calcofi4db 4.33.0 — Q1 Jan-Mar ... Q4 Oct-Dec before) and `season_mean` /
+-- `season_sd` / `season_n` / `season_n_cruises`, the season's own baseline (>= 5
+-- cruises), repeated on each of its three months — so both are looked up by the same
 -- (station, month, bin, type). A station whose MONTH is below the floor but whose
--- quarter is not (the northern lines 60-73.3) has a row with clim_mean NULL: a NULL
--- clim_mean is "no monthly baseline", exactly as an absent row is.
+-- season is not (the northern lines 60-73.3) has a row with clim_mean NULL: a NULL
+-- clim_mean is "no monthly baseline", exactly as an absent row is. The quarter here is
+-- always the DJF season of the row's month, so an older release reads the same way.
 --
 -- FEATURE-DETECTED. A release cut before 4.24.0 (v2026.10.08, the latest when this
 -- was written) has no season columns, and naming one would fail the build. The empty
@@ -262,7 +264,7 @@ SELECT dataset_key,
        depth_bin        AS depth_m,
        measurement_type AS var,
        clim_mean, clim_sd, clim_n, n_cruises, clim_yr_min, clim_yr_max,
-       COALESCE(quarter, (month - 1) // 3 + 1)::TINYINT AS quarter,
+       (CASE WHEN month IN (12, 1, 2) THEN 1 WHEN month IN (3, 4, 5) THEN 2 WHEN month IN (6, 7, 8) THEN 3 WHEN month IN (9, 10, 11) THEN 4 END)::TINYINT AS quarter,
        season_mean, season_sd, season_n, season_n_cruises
 FROM (SELECT NULL::TINYINT AS quarter,
              NULL::DOUBLE  AS season_mean,
@@ -283,22 +285,49 @@ SELECT * FROM climatology_all
 WHERE depth_m IS NOT NULL
   AND var IN (SELECT DISTINCT var FROM section);
 
+-- ── cruise labels, and the cruise's month and season ─────────────────────────
+-- The cruise's month is its MEDIAN cast month — `cruise.month_median`, with
+-- `date_median`, `season` and `season_year` beside it (release v2026.11+, calcofi4db
+-- 4.33.0; Rasmus Swalethorp 2026-10-16, Ben Best 2026-10-20) — never the MM of its
+-- cruise_key: a cruise ID names sometimes the month a cruise started and sometimes
+-- the month it mostly covered, and 59 of 868 cruises centre on the month beside
+-- their key's. The key's month is the fallback on a release cut before the column
+-- (FEATURE-DETECTED, the same typed-empty UNION BY NAME as climatology_all).
+-- `quarter` is the season, 1 = DJF ... 4 = SON; `season_year` counts December
+-- toward the following year's winter. The reshaper carries month / quarter / season
+-- onto every shard and index entry, so the app never parses the key.
+CREATE TEMP TABLE cruise AS
+SELECT cruise_key, ship_key, ship_name, date_median, month,
+       (CASE WHEN month IN (12, 1, 2) THEN 1 WHEN month IN (3, 4, 5) THEN 2 WHEN month IN (6, 7, 8) THEN 3 WHEN month IN (9, 10, 11) THEN 4 END)::TINYINT AS quarter,
+       COALESCE(season, (CASE WHEN month IN (12, 1, 2) THEN 'DJF' WHEN month IN (3, 4, 5) THEN 'MAM' WHEN month IN (6, 7, 8) THEN 'JJA' WHEN month IN (9, 10, 11) THEN 'SON' END)) AS season,
+       COALESCE(season_year, CASE WHEN month = 12 THEN yr + 1 ELSE yr END)::INTEGER AS season_year
+FROM (SELECT cr.cruise_key, cr.ship_key, sh.ship_name, cr.date_median, cr.season, cr.season_year,
+             COALESCE(cr.month_median, TRY_CAST(substr(cr.cruise_key, 6, 2) AS INTEGER))::INTEGER AS month,
+             COALESCE(year(cr.date_median), TRY_CAST(substr(cr.cruise_key, 1, 4) AS INTEGER))::INTEGER AS yr
+      FROM (SELECT NULL::DATE AS date_median, NULL::TINYINT AS month_median,
+                   NULL::VARCHAR AS season, NULL::SMALLINT AS season_year
+            WHERE FALSE
+            UNION ALL BY NAME
+            SELECT * FROM __TBL:cruise__) cr
+      LEFT JOIN __TBL:ship__ sh USING (ship_key));
+
 -- ── the anomaly ──────────────────────────────────────────────────────────────
 -- value - clim_mean, matched on the STATION (site_key, since the release's
 -- climatology moved to that grain, calcofi4db 4.8.0), the CRUISE's month and depth bin.
 --
--- The month is the cruise's designated month (the MM of cruise_key YYYY-MM-NODC),
--- never the month the cast was occupied in: the cruise's month is the season the
--- cruise samples. Matching on month(datetime) blanked cruise 2026-07-3322's line
--- 93.3 inshore stations (26.4-45, occupied 2026-06-30): they looked up a June
--- baseline, and no June cruise ran 1993-2013 (Rasmus Swalethorp, 2026-10-06).
+-- The month is the cruise's month (cruise.month above: its median cast month, the
+-- key's MM on an older release), never the month the cast was occupied in: the
+-- cruise's month is the season the cruise samples. Matching on month(datetime)
+-- blanked cruise 2026-07-3322's line 93.3 inshore stations (26.4-45, occupied
+-- 2026-06-30): they looked up a June baseline, and no June cruise ran 1993-2013
+-- (Rasmus Swalethorp, 2026-10-06).
 --
 -- An INNER join, so a cell with no baseline of either kind is ABSENT rather than
 -- zero, and within a row each anomaly is NULL where its own mean is (value - NULL).
 -- An unsampled baseline is not a zero anomaly, and collapsing the two is how a plot
 -- ends up colouring "normal" somewhere never measured. The reshaper leaves those
 -- cells null and the heatmap leaves them blank. `anomaly_season` is the same
--- departure from the quarter's baseline; NULL throughout on a release without it.
+-- departure from the season's baseline; NULL throughout on a release without it.
 --
 -- anomaly_sd expresses the departure in baseline standard deviations, which is
 -- what makes 1 degC interpretable: large at 200 m, unremarkable at the surface.
@@ -319,10 +348,12 @@ SELECT s.line, s.cruise_key, s.sta, s.var, s.depth_m,
 FROM section s
 JOIN section_station ss
   ON ss.line = s.line AND ss.cruise_key = s.cruise_key AND ss.sta = s.sta
+JOIN cruise cr
+  ON cr.cruise_key = s.cruise_key
 JOIN climatology cl
   ON cl.dataset_key = s.dataset_key
  AND cl.site_key = ss.site_key
- AND cl.mon      = TRY_CAST(substr(s.cruise_key, 6, 2) AS INTEGER)
+ AND cl.mon      = cr.month
  AND cl.depth_m  = s.depth_m
  AND cl.var      = s.var;
 
@@ -369,20 +400,14 @@ FROM cast_value v
 -- only stations the section draws: a cast with a line value but no field is not on it
 JOIN section_station ss
   ON ss.line = v.line AND ss.cruise_key = v.cruise_key AND ss.sta = v.sta
+JOIN cruise cr
+  ON cr.cruise_key = v.cruise_key
 LEFT JOIN climatology_all cl
   ON cl.dataset_key = v.dataset_key
  AND cl.site_key    = v.site_key
- AND cl.mon         = TRY_CAST(substr(v.cruise_key, 6, 2) AS INTEGER)
+ AND cl.mon         = cr.month
  AND cl.depth_m IS NULL
  AND cl.var         = v.var;
-
--- ── cruise labels ────────────────────────────────────────────────────────────
-CREATE TEMP TABLE cruise AS
-SELECT cr.cruise_key,
-       cr.ship_key,
-       sh.ship_name
-FROM __TBL:cruise__ cr
-LEFT JOIN __TBL:ship__ sh USING (ship_key);
 
 -- ── measurement labels ───────────────────────────────────────────────────────
 CREATE TEMP TABLE variable AS

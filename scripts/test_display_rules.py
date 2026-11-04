@@ -218,11 +218,11 @@ class TestStage(unittest.TestCase):
 
     def setUp(self):
         self.vars = ["temperature_ave", "salinity_ave_corr", "sigma_theta_ave",
-                     "spiciness0", "fluorescence_v"]
+                     "spiciness0", "buoyancy_n2", "fluorescence_v"]
         self.grids = {v: grid(5, profile) for v in self.vars}
 
     def test_derived_vars_are_named(self):
-        self.assertEqual(dr.DERIVED_VARS, {"sigma_theta_ave", "spiciness0"})
+        self.assertEqual(dr.DERIVED_VARS, {"sigma_theta_ave", "spiciness0", "buoyancy_n2"})
 
     def test_without_bottle_is_temperature_only(self):
         g, a = dr.stage_filter("preliminary_without_bottle", self.grids, dict(self.grids))
@@ -241,15 +241,19 @@ class TestStage(unittest.TestCase):
         self.assertEqual(list(g), self.vars)
 
     def test_cast_lines_follow_the_stage_rule(self):
-        # the per-cast MLD (needs corrected salinity) and chlorophyll-maximum depth
-        # (needs corrected chlorophyll) ride through stage_filter with the matrices:
-        # gone on a CTD-only cruise, kept once the bottle merge has run
+        # the per-cast MLD / pycnocline (need corrected salinity), chlorophyll-maximum
+        # depth, nitracline and hypoxic boundaries (corrected chlorophyll, nitrate,
+        # oxygen) ride through stage_filter with the matrices: gone on a CTD-only
+        # cruise, kept once the bottle merge has run
         lines = {v: {"value": [10.0, 20.0, None]} for v in dr.CAST_LINE_VARS}
         g, ln = dr.stage_filter("preliminary_without_bottle", self.grids, lines)
         self.assertEqual(ln, {})
         for stage in ("final", "preliminary_with_bottle"):
             g, ln = dr.stage_filter(stage, self.grids, lines)
-            self.assertEqual(set(ln), {"mld_sigma_theta_002", "chl_max_depth"}, stage)
+            self.assertEqual(set(ln), {"mld_sigma_theta_002", "chl_max_depth",
+                                       "pycnocline_depth", "nitracline_depth",
+                                       "hypoxic_depth_24", "hypoxic_depth_14",
+                                       "hypoxic_depth_05"}, stage)
 
     def test_seasonal_anomaly_rides_with_the_variable_rules(self):
         # a withheld variable leaves the seasonal matrices too, not only the monthly

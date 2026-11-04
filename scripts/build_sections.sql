@@ -137,8 +137,9 @@ QUALIFY row_number() OVER (
 --
 -- TWO DATASETS, ONE CAST. `calcofi_ctd-derived` (ctd-transects#5, #6) publishes
 -- per-bin `sigma_theta_ave` (the sensor-pair average by the provider's flags, which
--- replaces the sensor-1-only `sigma_theta_1`) and `spiciness0` (TEOS-10 spice) in
--- obs, at the depths ctd-cast publishes. Its rows carry ctd-cast's OWN sample_key
+-- replaces the sensor-1-only `sigma_theta_1`), `spiciness0` (TEOS-10 spice) and
+-- `buoyancy_n2` (N^2, TEOS-10, a 10 m running mean, 1/s2; Rasmus Swalethorp,
+-- 2026-11) in obs, at the depths ctd-cast publishes. Its rows carry ctd-cast's OWN sample_key
 -- (`calcofi_ctd-cast:cast:<id>`; measured on v2026.10.01: all 9,275 derived casts
 -- resolve to a ctd-cast `cast` row of `sample`, and `sample` has no ctd-derived rows),
 -- so they join `ctd_cast` above on sample_key exactly like ctd-cast's own rows —
@@ -170,6 +171,7 @@ WHERE o.dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
     'est_nitrate_cruise_corr',
     'sigma_theta_ave',
     'spiciness0',
+    'buoyancy_n2',
     'fluorescence_v',
     -- not drawn: the per-sensor inputs of sigma_theta_ave, read only for the flag
     -- guard below (ctd-transects#5: no fallback to sensor 1)
@@ -179,14 +181,21 @@ WHERE o.dataset_key IN ('calcofi_ctd-cast', 'calcofi_ctd-derived')
 -- ── a flagged input never reaches a derived value ───────────────────────────
 -- The provider flags its inputs, not our derivations: ctd-derived rows carry no
 -- measurement_qual. calcofi4db builds them after dropping 8/9 (spiciness0 from
--- temperature_ave + salinity_ave_corr; sigma_theta_ave = the sensor pair with a
--- flagged sensor dropped, so it exists only while one sensor is good), and the
+-- temperature_ave + salinity_ave_corr, as is buoyancy_n2; sigma_theta_ave = the
+-- sensor pair with a flagged sensor dropped, so it exists only while one sensor is
+-- good), and the
 -- ingest's flag-audit chunk asserts that. This re-asserts it on the bytes we draw:
 -- a derived value at a cast and depth where its inputs are flagged is dropped, and
 -- the count is reported in the summary below (0 on v2026.10.01; non-zero means the
 -- release broke the ingest's own rule and should be raised, not just filtered).
 CREATE TEMP TABLE derived_blocked AS
 SELECT sample_key, depth_min_m, 'spiciness0' AS var
+FROM ctd_obs
+WHERE dataset_key = 'calcofi_ctd-cast' AND flagged
+  AND measurement_type IN ('temperature_ave', 'salinity_ave_corr')
+UNION
+-- N^2 is built from the same two inputs (TEOS-10), so a flagged one blocks it too
+SELECT sample_key, depth_min_m, 'buoyancy_n2' AS var
 FROM ctd_obs
 WHERE dataset_key = 'calcofi_ctd-cast' AND flagged
   AND measurement_type IN ('temperature_ave', 'salinity_ave_corr')
@@ -205,7 +214,11 @@ SELECT c.line,
        o.dataset_key,
        o.measurement_type AS var,
        (floor(o.depth_min_m / 10) * 10)::INTEGER AS depth_m,
-       ROUND(AVG(o.measurement_value), 4) AS value
+       -- 4 dp, except N^2: 1e-4 to 1e-6 1/s2 would round to 0.0001 / 0, so it keeps 8 dp
+       -- (the same 3-4 significant digits every other variable ships)
+       -- (max() only so GROUP BY ALL sees an aggregate: the type is constant per group)
+       ROUND(AVG(o.measurement_value),
+             max(CASE WHEN o.measurement_type = 'buoyancy_n2' THEN 8 ELSE 4 END)) AS value
 FROM ctd_obs o
 JOIN ctd_cast c USING (sample_key)
 WHERE o.measurement_value IS NOT NULL
@@ -307,13 +320,14 @@ SELECT s.line, s.cruise_key, s.sta, s.var, s.depth_m,
        -- 2 dp, not 4: the anomaly is a DISPLAY quantity derived from values
        -- already shipped at full precision, and the extra digits cost ~16% of
        -- every shard to render a colour nobody can distinguish
-       ROUND(s.value - cl.clim_mean, 2) AS anomaly,
+       -- (8 dp for buoyancy_n2, whose whole range is below 0.01 1/s2)
+       ROUND(s.value - cl.clim_mean, CASE WHEN s.var = 'buoyancy_n2' THEN 8 ELSE 2 END) AS anomaly,
        CASE WHEN cl.clim_sd > 0
             THEN ROUND((s.value - cl.clim_mean) / cl.clim_sd, 4) END AS anomaly_sd,
        cl.clim_mean,
        cl.clim_n,
        cl.n_cruises,
-       ROUND(s.value - cl.season_mean, 2) AS anomaly_season,
+       ROUND(s.value - cl.season_mean, CASE WHEN s.var = 'buoyancy_n2' THEN 8 ELSE 2 END) AS anomaly_season,
        cl.season_mean,
        cl.season_n_cruises
 FROM section s
@@ -326,15 +340,23 @@ JOIN climatology cl
  AND cl.depth_m  = s.depth_m
  AND cl.var      = s.var;
 
--- ── per-cast lines: mixed-layer depth and the chlorophyll maximum ────────────
+-- ── per-cast lines: mixed layer, chlorophyll max, pycnocline, nitracline, hypoxic ──
 -- `calcofi_ctd-derived` also publishes one value per cast in `sample_measurement`
 -- (no depth): the mixed-layer depth and the depth of the chlorophyll maximum, among
 -- others (Rasmus Swalethorp, 2026-10-07: anomalies of the derived products). On a
--- section they are LINES on the depth axis, one point per station. Two are drawn:
+-- section they are LINES on the depth axis, one point per station. Seven are read
+-- (the app's picker chooses which are drawn; the first two are on by default):
 --   mld_sigma_theta_002 — the headline MLD, CalCOFI's legacy 0.02 kg/m3 criterion
 --                         from 10 m (the 0.125 kg/m3 and 0.2 degC variants are not
 --                         drawn: three MLDs on one plot is a legend, not a reading);
---   chl_max_depth       — the depth of the chlorophyll maximum.
+--   chl_max_depth       — the depth of the chlorophyll maximum;
+--   pycnocline_depth    — the pycnocline depth;
+--   nitracline_depth    — the 1 umol/L nitrate depth. The key is ALSO published by
+--                         `calcofi_bottle-derived`; only calcofi_ctd-derived's rows are
+--                         read here (the dataset_key filter below), and the climatology
+--                         join matches the same dataset's own baseline;
+--   hypoxic_depth_24 / _14 / _05 — the hypoxic boundary at 2.4 / 1.4 / 0.5 mL/L
+--                         (_05 has no climatology baseline: its line draws alone).
 -- Same cast and same keying as the field: the rows carry ctd-cast's own sample_key
 -- (the derived dataset publishes no sample rows), so they join `ctd_cast` on it and
 -- take its station, cruise and data_stage. Same quality predicate as the field
@@ -354,7 +376,9 @@ SELECT c.line, c.cruise_key, c.sta, c.site_key,
 FROM __TBL:sample_measurement__ m
 JOIN ctd_cast c USING (sample_key)
 WHERE m.dataset_key = 'calcofi_ctd-derived'
-  AND m.measurement_type IN ('mld_sigma_theta_002', 'chl_max_depth')
+  AND m.measurement_type IN ('mld_sigma_theta_002', 'chl_max_depth', 'pycnocline_depth',
+                             'nitracline_depth', 'hypoxic_depth_24', 'hypoxic_depth_14',
+                             'hypoxic_depth_05')
   AND m.measurement_value IS NOT NULL AND isfinite(m.measurement_value)
   AND NOT COALESCE(regexp_replace(m.measurement_qual, '\.0+$', '') IN ('8', '9'), FALSE)
 GROUP BY ALL;

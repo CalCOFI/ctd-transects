@@ -7,7 +7,7 @@
  * — a multilevel B-spline with no JavaScript port.
  *
  * State lives in the URL (?line=90&cruise=2026-04-3322&var=temperature_ave, plus
- * mode=, ruler=line, base=season and lines=off) so a section can be linked to,
+ * mode=, ruler=line, base=season and lines=off|a,b,c) so a section can be linked to,
  * which is the main thing people want from a plot like this.
  */
 
@@ -74,6 +74,15 @@ const RAMP_DIV_DARK = [
 
 const DIVERGING = new Set(["temperature_ave", "spiciness0"]);
 
+/* Buoyancy frequency squared (N², 1/s2) is a magnitude that starts at zero: a
+ * well-mixed column is ~0 and stratification only adds. It takes the sequential
+ * ramp (never the diverging one) with the floor pinned to 0 in the measured view,
+ * so the palest colour is "unstratified" whatever the section's own minimum — the
+ * occasional slightly-negative noise value clips to it. Its whole range is
+ * ~1e-6 to 1e-3, so every number it prints is in scientific notation. */
+const ZERO_FLOOR = new Set(["buoyancy_n2"]);
+const SCI_FORMAT = { buoyancy_n2: ".1e" };
+
 /* Spice (ctd-transects#6) is diverging for a different reason than temperature:
  * its SIGN is the reading. Positive is spicy (warm, salty: the California
  * Undercurrent's equatorial water), negative is minty (cool, fresh: the
@@ -110,12 +119,19 @@ const theme = () => darkMode()
       // per-cast lines: a hue off both ramps, on a contrasting halo, so each reads
       // over the deepest blue, the darkest red and the neutral alike
       halo: "rgba(0,0,0,0.75)",
-      castLine: { mld_sigma_theta_002: "#f5f5f5", chl_max_depth: "#4ade80" } }
+      castLine: { mld_sigma_theta_002: "#f5f5f5", chl_max_depth: "#4ade80",
+                  pycnocline_depth: "#fbbf24", nitracline_depth: "#f472b6",
+                  // the three hypoxic boundaries are one hue, lightest = mildest
+                  hypoxic_depth_24: "#ddd6fe", hypoxic_depth_14: "#a78bfa",
+                  hypoxic_depth_05: "#7c3aed" } }
   : { ink: "#212529", grid: "#dee2e6", panel: "#f1f3f5",
       contour: "rgba(255,255,255,0.7)", floor: "rgba(120,128,136,0.9)",
       floorLine: "#333", legendBg: "rgba(255,255,255,0.85)",
       halo: "rgba(255,255,255,0.85)",
-      castLine: { mld_sigma_theta_002: "#111111", chl_max_depth: "#0b7a35" } };
+      castLine: { mld_sigma_theta_002: "#111111", chl_max_depth: "#0b7a35",
+                  pycnocline_depth: "#b45309", nitracline_depth: "#be185d",
+                  hypoxic_depth_24: "#8b5cf6", hypoxic_depth_14: "#6d28d9",
+                  hypoxic_depth_05: "#3b0764" } };
 
 /* ── labels ──────────────────────────────────────────────────────────────── */
 
@@ -168,9 +184,35 @@ function readURL() {
     ruler: p.get("ruler") === "line" ? "line" : "occupied",
     // the baseline: the cruise's month (default) or its quarter (?base=season)
     base: p.get("base") === "season" ? "season" : "month",
-    // the MLD / chlorophyll-maximum lines are drawn unless ?lines=off
-    lines: p.get("lines") !== "off",
+    // which per-cast lines to draw: absent = the default pair, off = none,
+    // otherwise a comma list of cast-line keys (?lines=pycnocline_depth,hypoxic_depth_14)
+    lines: parseLines(p.get("lines")),
   };
+}
+
+/* ── per-cast line choice ────────────────────────────────────────────────── */
+
+const DEFAULT_CAST_LINES = ["mld_sigma_theta_002", "chl_max_depth"];
+
+/* every per-cast line the build offers, in legend order */
+const castLineKeys = () => (state.index.cast_lines || []).map((m) => m.var);
+
+/* the pair drawn until the reader picks others (index.json carries it) */
+const defaultLines = () => state.index.cast_lines_default || DEFAULT_CAST_LINES;
+
+/* A line choice is always an array of known keys in legend order: absent or
+ * garbled -> the default, "off" -> none, a list -> its known members. Links made
+ * before the picker (?lines=off, or none) mean what they always meant. */
+function normLines(list) {
+  const want = new Set(list);
+  return castLineKeys().filter((k) => want.has(k));
+}
+
+function parseLines(raw) {
+  if (raw == null || raw === "") return normLines(defaultLines());
+  if (raw === "off") return [];
+  const got = normLines(raw.split(","));
+  return got.length ? got : normLines(defaultLines());
 }
 
 function writeURL(sel) {
@@ -180,7 +222,9 @@ function writeURL(sel) {
   p.set("mode", sel.mode === "value" ? "value" : "anomaly");
   if (sel.ruler === "line") p.set("ruler", "line");
   if (sel.base === "season") p.set("base", "season");
-  if (sel.lines === false) p.set("lines", "off");
+  const lines = normLines(sel.lines || []);
+  if (lines.length === 0) p.set("lines", "off");
+  else if (lines.join() !== normLines(defaultLines()).join()) p.set("lines", lines.join());
   history.replaceState(null, "", `${location.pathname}?${p}`);
 }
 
@@ -333,7 +377,7 @@ function resolve(sel) {
            mode: sel.mode === "anomaly" ? "anomaly" : "value",
            ruler: sel.ruler === "line" ? "line" : "occupied",
            base: sel.base === "season" ? "season" : "month",
-           lines: sel.lines !== false };
+           lines: Array.isArray(sel.lines) ? normLines(sel.lines) : normLines(defaultLines()) };
 }
 
 /* ── the section plot ────────────────────────────────────────────────────── */
@@ -508,9 +552,10 @@ function castLineText(meta, s, v, nv, n, base, cruiseKey, releaseNormals) {
 }
 
 /* Push the line traces for whatever this shard carries; returns how many lines. */
-function pushCastLines(traces, shard, x, base, t) {
+function pushCastLines(traces, shard, x, base, t, picked) {
   const lines = shard.lines || {};
-  const metas = (state.index.cast_lines || []).filter((m) => lines[m.var]);
+  const pick = new Set(picked);
+  const metas = (state.index.cast_lines || []).filter((m) => lines[m.var] && pick.has(m.var));
   const releaseNormals = !!(state.index.baseline && state.index.baseline.has_cast_normal);
   const key = base === "season" ? "season" : "month";
   const nKey = base === "season" ? "n_season" : "n_month";
@@ -543,7 +588,7 @@ function pushCastLines(traces, shard, x, base, t) {
   return metas.length;
 }
 
-function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", showLines = true) {
+function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pickedLines = []) {
   const meta = state.index.variables.find((v) => v.var === varName);
   const anom = mode === "anomaly";
   state.base = base;
@@ -598,6 +643,8 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", show
     // otherwise a uniformly warm cruise paints its least-warm part blue. Spice's
     // zero is its spicy/minty boundary, so it is pinned in both views.
     ...(anom || ZERO_CENTRED.has(varName) ? { zmid: 0 } : {}),
+    ...(!anom && ZERO_FLOOR.has(varName) ? { zmin: 0 } : {}),
+    ...(SCI_FORMAT[varName] ? { hoverformat: ".3e" } : {}),
     /* connectgaps bridges a station that missed a depth bin, and it must stay ON
      * in both views.
      *
@@ -646,6 +693,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", show
     colorbar: {
       title: { text: colorbarTitle(varName, units, anom), side: "right" },
       thickness: 12, outlinewidth: 0, tickfont: { color: t.ink, size: 11 },
+      ...(SCI_FORMAT[varName] ? { tickformat: SCI_FORMAT[varName] } : {}),
       titlefont: { color: t.ink, size: 11 },
     },
   }, {
@@ -667,7 +715,8 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", show
      * them the same way and the two traces describe the same field. */
     connectgaps: true,
     contours: { ...contourLevels(zd), coloring: "none", showlabels: true,
-                labelfont: { size: 10, color: t.ink } },
+                labelfont: { size: 10, color: t.ink },
+                ...(SCI_FORMAT[varName] ? { labelformat: SCI_FORMAT[varName] } : {}) },
     line: { color: t.contour, width: 1 },
     showscale: false,       // without this the contour adds a SECOND colorbar
     showlegend: false,
@@ -706,7 +755,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", show
   }
 
   // the cast's mixed-layer depth and chlorophyll maximum, over the field
-  const nLines = showLines ? pushCastLines(traces, shard, x, base, t) : 0;
+  const nLines = pushCastLines(traces, shard, x, base, t, pickedLines);
 
   /* Station tick marks along the top, drawn on the SECOND x-axis so that axis's
    * tick labels are the station numbers (an axis with no trace on it does not
@@ -789,7 +838,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", show
     plot_bgcolor: t.panel,
     paper_bgcolor: "rgba(0,0,0,0)",
     hovermode: "closest",
-    // only the MLD / chl-max lines carry a legend entry; inside the panel, at the
+    // only the per-cast lines carry a legend entry; inside the panel, at the
     // offshore-deep corner, where the field is deep water and the seafloor rarely is
     showlegend: nLines > 0,
     legend: {
@@ -1029,16 +1078,9 @@ async function render(sel) {
   $("ctl-ruler").title = haveLine ? "" :
     "No along-line distances for this line, so the comparable axis is unavailable.";
 
-  // the MLD / chl-max lines: offered where the shard carries any
-  const haveLines = Object.keys(shard.lines || {}).length > 0;
-  $("sel-lines").disabled = !haveLines;
-  $("sel-lines").checked = sel.lines;
-  $("ctl-lines").title = haveLines
-    ? "The cruise's mixed-layer depth and chlorophyll-maximum depth at each station, " +
-      "with their normal for the selected baseline dashed."
-    : "No mixed-layer or chlorophyll-maximum depths for this section" +
-      (shard.data_stage === "preliminary_without_bottle"
-        ? " (both need the bottle merge)." : ".");
+  // the per-cast lines: each offered where the shard carries it; the choice is
+  // kept across sections, so a line absent here is greyed, not unticked
+  syncLinePicker(shard, sel.lines);
 
   // written now, not before the fetch: `mode` may have been downgraded to
   // "value" above, and a URL promising an anomaly that is not on screen is a
@@ -1047,7 +1089,7 @@ async function render(sel) {
 
   const maxDepth = Number($("sel-depth").value);
   drawSection(shard, sel.var, maxDepth, mode,
-              $("sel-ruler").checked ? "line" : "occupied", base, sel.lines && haveLines);
+              $("sel-ruler").checked ? "line" : "occupied", base, sel.lines);
   drawMap(shard);
 
   /* Plotly measures its container at draw time, and on the FIRST render that is
@@ -1063,6 +1105,61 @@ async function render(sel) {
   });
 }
 
+/* ── the per-cast line picker ────────────────────────────────────────────── */
+
+/* The ticked keys, in legend order. Greyed boxes still count: the choice belongs
+ * to the reader, not to the section, so it survives a cruise with no nitracline. */
+function pickedLines() {
+  return [...$("lines-list").querySelectorAll("input:checked")].map((i) => i.value);
+}
+
+/* Build the checkbox list once (it is the index's cast_lines), then on every render
+ * tick the choice, grey the lines this section has none of, and say how many show. */
+function syncLinePicker(shard, picked) {
+  const list = $("lines-list");
+  const metas = state.index.cast_lines || [];
+  if (list.children.length !== metas.length) {
+    list.innerHTML = "";
+    for (const m of metas) {
+      const lab = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = m.var;
+      const sw = document.createElement("i");
+      sw.className = "swatch";
+      sw.dataset.var = m.var;
+      lab.append(box, sw, document.createTextNode(m.label));
+      list.appendChild(lab);
+    }
+  }
+  const have = shard.lines || {};
+  const pick = new Set(picked);
+  let shown = 0;
+  for (const lab of list.children) {
+    const box = lab.querySelector("input");
+    const m = metas.find((x) => x.var === box.value) || {};
+    box.checked = pick.has(box.value);
+    box.disabled = !have[box.value];
+    lab.classList.toggle("off", box.disabled);
+    lab.title = box.disabled
+      ? `No ${(m.label || box.value).toLowerCase()} for this section` +
+        (shard.data_stage === "preliminary_without_bottle" ? " (it needs the bottle merge)." : ".")
+      : m.detail || "";
+    if (box.checked && !box.disabled) shown += 1;
+  }
+  $("lines-summary").textContent = Object.keys(have).length === 0
+    ? "none for this section"
+    : shown === 0 ? "none drawn" : `${shown} drawn`;
+  paintLineSwatches();
+}
+
+/* swatches take the theme's colours, so they are repainted on a theme change */
+function paintLineSwatches() {
+  const colors = theme().castLine;
+  for (const sw of $("lines-list").querySelectorAll(".swatch"))
+    sw.style.background = colors[sw.dataset.var] || "currentColor";
+}
+
 function currentSel() {
   return {
     line: $("sel-line").value,
@@ -1071,7 +1168,7 @@ function currentSel() {
     mode: $("sel-mode").value,
     ruler: $("sel-ruler").checked ? "line" : "occupied",
     base: $("sel-base").value,
-    lines: $("sel-lines").checked,
+    lines: pickedLines(),
   };
 }
 
@@ -1081,7 +1178,7 @@ function redrawSection() {
   if (!state.shard) return;
   const c = currentSel();
   drawSection(state.shard, c.var, Number($("sel-depth").value), c.mode, c.ruler,
-              c.base, c.lines && !$("sel-lines").disabled);
+              c.base, c.lines);
 }
 
 /* `citation` is an optional block on data/version.json (WS-A4, written by
@@ -1192,7 +1289,12 @@ async function init() {
       $(id).addEventListener("change", () => render(currentSel()));
     }
     $("sel-ruler").addEventListener("change", () => render(currentSel()));
-    $("sel-lines").addEventListener("change", () => render(currentSel()));
+    $("lines-list").addEventListener("change", () => render(currentSel()));
+    // the picker is a <details> popover: close it on a click anywhere else
+    document.addEventListener("click", (e) => {
+      const d = $("lines-pick");
+      if (d.open && !d.contains(e.target)) d.open = false;
+    });
     $("sel-depth").addEventListener("input", (e) => {
       $("out-depth").textContent = e.target.value;
       redrawSection();
@@ -1203,6 +1305,7 @@ async function init() {
     document.addEventListener("cc:theme", () => {
       if (!state.shard) return;
       redrawSection();
+      paintLineSwatches();
       drawMap(state.shard);
     });
 

@@ -109,13 +109,18 @@
       <abbr title="Draw the section against the full length of the line rather than only the stations this cruise occupied, so cruises covering different extents are comparable in width.">?</abbr>
     </span>
   </label>
-  <!-- the per-cast mixed-layer depth and chlorophyll-maximum depth (?lines=off hides) -->
-  <label class="ctl ctl-check" id="ctl-lines">
-    <input id="sel-lines" type="checkbox" checked>
-    <span>MLD &amp; chl-max lines
-      <abbr title="The cruise's mixed-layer depth and depth of the chlorophyll maximum at each station, drawn over the section, with their normal for the selected baseline dashed in the same colour.">?</abbr>
+  <!-- the per-cast lines drawn over the section: mixed-layer, chlorophyll-max,
+       pycnocline, nitracline and the hypoxic boundaries. The list is filled by
+       app.js from index.json's cast_lines; ?lines=off hides all, ?lines=a,b picks. -->
+  <div class="ctl" id="ctl-lines">
+    <span>Lines over the section
+      <abbr title="Per-cast depths drawn over the section, one point per station, with their normal for the selected baseline dashed in the same colour. Tick the ones to show; a greyed one has no value on this section.">?</abbr>
     </span>
-  </label>
+    <details class="lines-pick" id="lines-pick">
+      <summary id="lines-summary">…</summary>
+      <div class="lines-list" id="lines-list"></div>
+    </details>
+  </div>
   <div class="spacer"></div>
   <div id="stage-badge" class="badge" hidden></div>
 </nav>
@@ -276,9 +281,31 @@
       cruise.
     </p>
 
-    <h3>Mixed-layer depth and the chlorophyll maximum</h3>
+    <h3>Stratification (buoyancy frequency)</h3>
     <p>
-      The two lines over the section are per-cast values from the
+      <strong>Buoyancy frequency squared</strong>, N² (1/s²), is the same
+      dataset's measure of how strongly the water column resists vertical mixing:
+      TEOS-10, smoothed with a 10&nbsp;m running mean. It is zero or near zero in
+      a well-mixed layer and large across the pycnocline, so it starts at zero on
+      a one-hue colour ramp (the palest colour is unstratified) and is printed in
+      scientific notation. Like spice it needs bottle-corrected salinity, so it is
+      not drawn on a CTD-only cruise, and a flagged temperature or salinity never
+      enters it. Its anomaly is a departure from the same monthly or seasonal
+      climatology as every other variable.
+    </p>
+
+    <h3>Per-cast depths: mixed layer, chlorophyll maximum, pycnocline, nitracline, hypoxia</h3>
+    <p>
+      The <strong>Lines over the section</strong> picker draws up to seven per-cast
+      values over the section: the mixed-layer depth and chlorophyll-maximum depth
+      (on by default), the <strong>pycnocline depth</strong>, the
+      <strong>nitracline depth</strong> (where nitrate reaches 1&nbsp;µmol/L) and
+      the <strong>hypoxic boundary</strong> at 2.4, 1.4 and 0.5&nbsp;mL/L of oxygen.
+      A line the section has no values for is greyed in the picker, and the choice
+      is kept in the link (<code>?lines=pycnocline_depth,hypoxic_depth_14</code>;
+      <code>?lines=off</code> draws none). The 0.5&nbsp;mL/L boundary has no normal,
+      so it draws alone. The mixed-layer and chlorophyll-maximum lines are
+      per-cast values from the
       <a href="https://calcofi.io/datasets/calcofi_ctd-derived/">CTD-derived
       dataset ↗</a>: the <strong>mixed-layer depth</strong>, by CalCOFI's
       long-standing criterion (the depth where potential density first exceeds its
@@ -288,8 +315,9 @@
       normal for this station and the selected baseline — the per-cast cells of the
       same <code>climatology</code> table, over the same years — and hovering a
       point gives the value, the normal and the difference. Both need
-      bottle-corrected salinity or chlorophyll, so neither is drawn on a CTD-only
-      cruise; a release without per-cast normals draws the solid lines alone.
+      bottle-corrected salinity, chlorophyll, nitrate or oxygen, so none is drawn
+      on a CTD-only cruise; a release without per-cast normals draws the solid
+      lines alone.
     </p>
 
     <h3>Processing stage</h3>

@@ -52,10 +52,13 @@ ANOMALY
     `baseline.has_season` is false.
 
 PER-CAST LINES
-    `lines` carries, per station, the cast's mixed-layer depth and chlorophyll-maximum
-    depth (calcofi_ctd-derived, sample_measurement) with their monthly and seasonal
-    normals (the climatology's per-cast cells, depth_bin NULL) — drawn as lines over
-    the section, the normals dashed. Null where a station has no value or no normal.
+    `lines` carries, per station, the cast's mixed-layer depth, chlorophyll-maximum
+    depth, pycnocline depth, nitracline depth (1 umol/L) and the three hypoxic
+    boundaries (2.4 / 1.4 / 0.5 mL/L) — calcofi_ctd-derived, sample_measurement —
+    with their monthly and seasonal normals (the climatology's per-cast cells,
+    depth_bin NULL; hypoxic_depth_05 has none), drawn as lines over the section, the
+    normals dashed. The app's picker chooses which; index.json's `cast_lines_default`
+    is the pair drawn first. Null where a station has no value or no normal.
 
 WHAT IS NOT DRAWN (scripts/display_rules.py)
     A section with fewer than 3 stations is not written. Within a section, a
@@ -89,13 +92,16 @@ DEPTHS = list(range(0, 510, 10))
 # (Rasmus, 2026-09-16: "individual sensors … we can get rid of"). sigma_theta_1 is
 # replaced by calcofi_ctd-derived's sensor-pair average sigma_theta_ave, with no
 # fallback to sensor 1 (ctd-transects#5); spiciness0 is new (#6). fluorescence_v
-# stays until Rasmus decides on it (#10).
+# stays until Rasmus decides on it (#10). buoyancy_n2 (N^2, TEOS-10, 10 m running
+# mean; 2026-11) follows spiciness0: same dataset, same depths, same climatology rule.
+
 VAR_ORDER = [
     ("temperature_ave",               None),
     ("salinity_ave_corr",             None),
     ("sigma_theta_ave",               None),
     ("spiciness0",                    None),
-    ("oxygen_ml_l_ave_sta_corr",      None),
+    ("buoyancy_n2",                   None),
+    ("oxygen_ml_l_ave_sta_corr",     None),
     ("oxygen_ml_l_ave_cruise_corr",   None),
     ("est_chlorophyll_a_sta_corr",    None),
     ("est_chlorophyll_a_cruise_corr", None),
@@ -110,6 +116,7 @@ VAR_ORDER = [
 SHORT_LABEL = {
     "sigma_theta_ave": "Potential density σθ (sensor-pair average)",
     "spiciness0":      "Spice (+ spicy, − minty)",
+    "buoyancy_n2":     "Buoyancy frequency squared N² (stratification)",
 }
 
 # What a cruise at each processing tier may show is display_rules.STAGE_VARS,
@@ -137,7 +144,22 @@ CAST_LINES = [
                              "detail": "Δσθ = 0.02 kg/m³ from 10 m"}),
     ("chl_max_depth",       {"label": "Chlorophyll-max depth", "units": "m",
                              "detail": "depth of the chlorophyll maximum"}),
+    ("pycnocline_depth",    {"label": "Pycnocline depth", "units": "m",
+                             "detail": "depth of the pycnocline"}),
+    ("nitracline_depth",    {"label": "Nitracline depth (1 µmol/L)", "units": "m",
+                             "detail": "depth where nitrate reaches 1 µmol/L"}),
+    ("hypoxic_depth_24",    {"label": "Hypoxic boundary 2.4 mL/L", "units": "m",
+                             "detail": "depth of the 2.4 mL/L oxygen boundary"}),
+    ("hypoxic_depth_14",    {"label": "Hypoxic boundary 1.4 mL/L", "units": "m",
+                             "detail": "depth of the 1.4 mL/L oxygen boundary"}),
+    ("hypoxic_depth_05",    {"label": "Hypoxic boundary 0.5 mL/L", "units": "m",
+                             "detail": "depth of the 0.5 mL/L oxygen boundary"}),
 ]
+
+# The lines drawn until the reader picks others (the pre-2026-11 pair), and the
+# order the picker lists them in is CAST_LINES' own. index.json carries the default
+# so the browser and this file cannot disagree.
+CAST_LINES_DEFAULT = ["mld_sigma_theta_002", "chl_max_depth"]
 
 # lines with near-complete cruise coverage; everything else is offered but not
 # defaulted to (lines 60-73.3 appear on ~20-27 cruises, vs ~90 for these)
@@ -605,6 +627,8 @@ def main():
         "variables": variables,
         # the per-cast lines drawn over a section, in legend order (shard `lines`)
         "cast_lines": [{"var": v, **meta} for v, meta in CAST_LINES],
+        # the ones drawn until the reader's picker says otherwise
+        "cast_lines_default": CAST_LINES_DEFAULT,
         "default": {
             "line": lines[0]["line"] if lines else None,
             "cruise_key": lines[0]["cruises"][0]["cruise_key"] if lines else None,
@@ -645,7 +669,7 @@ def main():
           + (f"{int(bas['n_season_cells']):,} cells" if bool(bas["has_season"])
              else "none in this release"))
     n_lines = sum(1 for cs in index_lines.values() for c in cs.values() if c["line_vars"])
-    print(f"lines    : MLD / chl-max lines on {n_lines} of {n_written} shards; "
+    print(f"lines    : per-cast lines on {n_lines} of {n_written} shards; "
           f"{len(cst):,} cast values, {int(cst['clim_mean'].notna().sum()):,} with a "
           f"monthly normal, {int(cst['season_mean'].notna().sum()):,} with a seasonal one")
 

@@ -19,8 +19,8 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import display_rules as dr  # noqa: E402
-from build_sections import (CAST_LINES, DEPTHS, anomaly_matrices,  # noqa: E402
-                            cast_lines)
+from build_sections import (CAST_LINES, CAST_LINES_DEFAULT, DEPTHS,  # noqa: E402
+                            VAR_ORDER, anomaly_matrices, cast_lines)
 
 NA = float("nan")
 STA_IX = {30.0: 0, 40.0: 1, 50.0: 2}
@@ -115,6 +115,35 @@ class CastLines(unittest.TestCase):
     def test_drawn_types_are_the_stage_rules(self):
         # the app's legend order and the stage rule name the same two types
         self.assertEqual({v for v, _ in CAST_LINES}, dr.CAST_LINE_VARS)
+
+    def test_the_picker_offers_seven_lines_and_defaults_to_the_original_pair(self):
+        # Rasmus Swalethorp, 2026-11: pycnocline, nitracline and the three hypoxic
+        # boundaries beside the MLD and chlorophyll maximum; the first two stay the
+        # lines a link without ?lines= draws
+        self.assertEqual([v for v, _ in CAST_LINES],
+                         ["mld_sigma_theta_002", "chl_max_depth", "pycnocline_depth",
+                          "nitracline_depth", "hypoxic_depth_24", "hypoxic_depth_14",
+                          "hypoxic_depth_05"])
+        self.assertEqual(CAST_LINES_DEFAULT, ["mld_sigma_theta_002", "chl_max_depth"])
+        self.assertTrue(set(CAST_LINES_DEFAULT) <= {v for v, _ in CAST_LINES})
+        self.assertTrue(all(m["units"] == "m" and m["label"] for _, m in CAST_LINES))
+
+    def test_buoyancy_n2_is_a_derived_section_variable(self):
+        order = [v for v, _ in VAR_ORDER]
+        self.assertIn("buoyancy_n2", order)
+        self.assertEqual(order.index("buoyancy_n2"), order.index("spiciness0") + 1)
+        self.assertIn("buoyancy_n2", dr.DERIVED_VARS)
+
+    def test_new_per_cast_types_are_read_like_the_mld(self):
+        # the pycnocline line is read through the same reshaper as the MLD
+        f = pd.DataFrame({
+            "var": ["pycnocline_depth", "pycnocline_depth"], "sta": [30.0, 40.0],
+            "value": [35.0, 28.0], "clim_mean": [30.0, NA], "n_cruises": [10, NA],
+            "season_mean": [31.0, NA], "season_n_cruises": [15, NA]})
+        got = cast_lines(f, STA_IX, 3)["pycnocline_depth"]
+        self.assertEqual(got["value"], [35.0, 28.0, None])
+        self.assertEqual(got["month"], [30.0, None, None])
+        self.assertEqual(got["n_season"], [15, None, None])
 
 
 if __name__ == "__main__":

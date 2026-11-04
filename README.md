@@ -84,11 +84,20 @@ feature-detects the columns (an empty typed `SELECT` unioned `BY NAME`), so a re
 without them builds unchanged and `index.json`'s `baseline.has_season` disables the
 toggle.
 
-Over the section the app draws two **per-cast lines** from `calcofi_ctd-derived`'s
-`sample_measurement` rows: the mixed-layer depth (`mld_sigma_theta_002`, Δσθ =
-0.02 kg/m³ from 10 m) and the chlorophyll-maximum depth (`chl_max_depth`), each with
-its normal dashed in the same colour — the climatology's per-cast cells (`depth_bin`
-NULL, matched with `IS NULL`) for the selected baseline. `?lines=off` hides them. A
+Over the section the app draws **per-cast lines** from `calcofi_ctd-derived`'s
+`sample_measurement` rows, chosen in the **Lines over the section** picker: the
+mixed-layer depth (`mld_sigma_theta_002`, Δσθ = 0.02 kg/m³ from 10 m) and the
+chlorophyll-maximum depth (`chl_max_depth`), drawn by default, and the pycnocline
+depth (`pycnocline_depth`), the nitracline depth (`nitracline_depth`, 1 µmol/L; the
+key is also published by `calcofi_bottle-derived`, whose rows are never read) and the
+hypoxic boundaries at 2.4 / 1.4 / 0.5 mL/L (`hypoxic_depth_24`, `_14`, `_05`). Each
+has its normal dashed in the same colour — the climatology's per-cast cells
+(`depth_bin` NULL, matched with `IS NULL`) for the selected baseline; `hypoxic_depth_05`
+has none. `?lines=off` hides all, `?lines=pycnocline_depth,hypoxic_depth_14` picks (a
+link without `lines` draws the first two, as before). `buoyancy_n2` (N², TEOS-10, 10 m
+running mean, 1/s²) is a section variable beside `spiciness0`, on the sequential ramp
+from zero; its values sit far below the 4 dp every other variable ships, so the build
+keeps 8 dp for it. A
 release without per-cast cells draws the solid lines alone; one without
 `sample_measurement` (`scripts/sample_measurement_fallback.sql`) draws none; a CTD-only
 cruise draws none (display rule 5).

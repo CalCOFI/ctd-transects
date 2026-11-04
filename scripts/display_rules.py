@@ -36,7 +36,7 @@ THE RULES (all per section; a "section" is one line x one cruise)
     5. stage     — a preliminary_without_bottle (CTD-only) cruise shows temperature
                    alone (Rasmus, 2026-09-09: an uncorrected sensor reads as a real
                    signal in the anomaly view). That covers the ctd-derived series
-                   too: sigma_theta_ave and spiciness0 need bottle-corrected
+                   too: sigma_theta_ave, spiciness0 and buoyancy_n2 need bottle-corrected
                    salinity, and the release ships neither on those casts
                    (ctd-transects#6). See STAGE_VARS / stage_filter.
 
@@ -58,14 +58,18 @@ STAGE_VARS = {
 
 # The calcofi_ctd-derived series this app draws (ctd-transects#5, #6). Named here
 # so the stage rule's test can say what must never reach a CTD-only cruise.
-DERIVED_VARS = frozenset({"sigma_theta_ave", "spiciness0"})
+DERIVED_VARS = frozenset({"sigma_theta_ave", "spiciness0", "buoyancy_n2"})
 
 # The per-cast calcofi_ctd-derived values drawn as lines over a section (shard
-# `lines`): the mixed-layer depth and the chlorophyll-maximum depth. They pass
-# through stage_filter with the matrices — not in STAGE_VARS' temperature set, so a
-# CTD-only cruise draws neither (an MLD from uncorrected salinity, a chlorophyll
-# maximum from uncorrected chlorophyll).
-CAST_LINE_VARS = frozenset({"mld_sigma_theta_002", "chl_max_depth"})
+# `lines`): the mixed-layer depth, chlorophyll-maximum depth, pycnocline depth,
+# nitracline depth and the three hypoxic boundaries. They pass through stage_filter
+# with the matrices — not in STAGE_VARS' temperature set, so a CTD-only cruise draws
+# none (an MLD or pycnocline from uncorrected salinity, a chlorophyll maximum or
+# nitracline from uncorrected chlorophyll / nitrate, a hypoxic boundary from
+# uncorrected oxygen).
+CAST_LINE_VARS = frozenset({"mld_sigma_theta_002", "chl_max_depth", "pycnocline_depth",
+                            "nitracline_depth", "hypoxic_depth_24", "hypoxic_depth_14",
+                            "hypoxic_depth_05"})
 
 STA_SUFFIX = "_sta_corr"
 CRUISE_SUFFIX = "_cruise_corr"

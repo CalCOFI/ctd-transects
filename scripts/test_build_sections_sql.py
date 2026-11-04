@@ -4,7 +4,7 @@
 test_resolve_release.py proves the build's tokens resolve; this proves what the
 build then DOES with the bytes, one small fixture per rule (ctd-transects#5, #6):
 
-  * calcofi_ctd-derived rows (sigma_theta_ave, spiciness0) join their cast through
+  * calcofi_ctd-derived rows (sigma_theta_ave, spiciness0, buoyancy_n2) join their cast through
     ctd-cast's own sample_key and are drawn; sigma_theta_1 is not.
   * a provider flag outranks everything: a flagged ctd-cast value is not drawn, and
     a derived value whose inputs are flagged at that cast and depth is not drawn
@@ -122,6 +122,13 @@ CREATE TABLE obs_rows AS SELECT * FROM (VALUES
   ('calcofi_ctd-derived', 40, 10.0, 'spiciness0',     -0.15, NULL),
   ('calcofi_ctd-derived', 50, 1.0,  'spiciness0',     -0.30, NULL),
   ('calcofi_ctd-derived', 50, 10.0, 'spiciness0',      5.00, NULL),   -- salinity flagged
+  -- N^2 (1/s2): values far below 4 dp, so the build's rounding must not flatten them
+  ('calcofi_ctd-derived', 30, 1.0,  'buoyancy_n2',     0.000012, NULL),
+  ('calcofi_ctd-derived', 30, 10.0, 'buoyancy_n2',     0.00025,  NULL),
+  ('calcofi_ctd-derived', 40, 1.0,  'buoyancy_n2',     0.000003, NULL),
+  ('calcofi_ctd-derived', 40, 10.0, 'buoyancy_n2',     0.00041,  NULL),
+  ('calcofi_ctd-derived', 50, 1.0,  'buoyancy_n2',     0.000008, NULL),
+  ('calcofi_ctd-derived', 50, 10.0, 'buoyancy_n2',     0.00099,  NULL),   -- salinity flagged
   -- 901 = SCCOOS 93.4 26.4 (drawn on line 93.3), 902 = 88.5 30.1 (on no line)
   ('calcofi_ctd-cast', 901, 1.0,  'temperature_ave',   15.8, NULL),
   ('calcofi_ctd-cast', 902, 1.0,  'temperature_ave',   16.2, NULL))
@@ -143,6 +150,7 @@ CREATE TABLE climatology AS SELECT * FROM (VALUES
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',      0.05, 0.1, 40, 12, NULL::DOUBLE, NULL::INT),
   ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'spiciness0',    100.0,  0.1, 40, 12, NULL, NULL),  -- decoy
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'sigma_theta_ave', 24.5, 0.2, 40, 12, NULL, NULL),
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'buoyancy_n2', 0.00001, 0.000003, 40, 12, NULL, NULL),
   ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'temperature_ave', 14.0, 0.5, 40, 12, 14.5, 30),
   -- station 30: July (the cruise's month, Q3 normal 15.5) and a June decoy
   ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 7, 0, 'temperature_ave', 16.0, 0.5, 40, 12, 15.5, 30),
@@ -155,6 +163,13 @@ CREATE TABLE climatology AS SELECT * FROM (VALUES
   -- station 50 April season only
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, NULL, 'mld_sigma_theta_002', 20.0, 5.0, 30, 10, 22.0, 15),
   ('calcofi_ctd-derived', '093.3 050.0', 'st50-ln93.3', 4, NULL, 'mld_sigma_theta_002', NULL, NULL, NULL, NULL, 33.0, 6),
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, NULL, 'pycnocline_depth', 30.0, 6.0, 30, 10, 31.0, 15),
+  ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, NULL, 'nitracline_depth', 55.0, 9.0, 30, 11, 56.0, 16),
+  ('calcofi_ctd-derived', '093.3 040.0', 'st40-ln93.3', 4, NULL, 'hypoxic_depth_24', 310.0, 20.0, 30, 9, 305.0, 14),
+  ('calcofi_ctd-derived', '093.3 040.0', 'st40-ln93.3', 4, NULL, 'hypoxic_depth_14', 380.0, 25.0, 30, 8, 385.0, 13),
+  -- no cell for hypoxic_depth_05 (the release publishes no baseline for it); and the
+  -- bottle-derived dataset's own nitracline cell, which is not the CTD line's normal
+  ('calcofi_bottle-derived', '093.3 030.0', 'st30-ln93.3', 4, NULL, 'nitracline_depth', 99.0, 9.0, 30, 11, 99.0, 16),
   -- decoy: a per-BIN mld cell, which a per-cast value must never match
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'mld_sigma_theta_002', 999.0, 1.0, 30, 10, 999.0, 15))
   t(dataset_key, site_key, grid_key, month, depth_bin, measurement_type,
@@ -185,7 +200,15 @@ CREATE TABLE sample_measurement AS SELECT * FROM (VALUES
   (6, 'calcofi_ctd-cast:cast:2504_050d', 'calcofi_ctd-derived', 'mld_sigma_theta_0125', 20.0, NULL),   -- not drawn
   (7, 'calcofi_ctd-cast:cast:2504_050d', 'calcofi_ctd-derived', 'chl_max',               2.1, NULL),   -- not drawn
   (8, 'calcofi_ctd-cast:cast:2504_902d', 'calcofi_ctd-derived', 'mld_sigma_theta_002',  10.0, NULL),   -- on no line
-  (9, 'calcofi_ctd-cast:cast:2504_030d', 'swfsc_ichthyo',       'mld_sigma_theta_002', 500.0, NULL))   -- other dataset
+  (9, 'calcofi_ctd-cast:cast:2504_030d', 'swfsc_ichthyo',       'mld_sigma_theta_002', 500.0, NULL),   -- other dataset
+  (10, 'calcofi_ctd-cast:cast:2504_030d', 'calcofi_ctd-derived', 'pycnocline_depth',   35.0, NULL),
+  (11, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'pycnocline_depth',   28.0, NULL),
+  (12, 'calcofi_ctd-cast:cast:2504_030d', 'calcofi_ctd-derived', 'nitracline_depth',   60.0, NULL),
+  -- the same key from the bottle-derived dataset: a different value, never drawn
+  (13, 'calcofi_ctd-cast:cast:2504_030d', 'calcofi_bottle-derived', 'nitracline_depth', 45.0, NULL),
+  (14, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'hypoxic_depth_24',  300.0, NULL),
+  (15, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'hypoxic_depth_14',  400.0, NULL),
+  (16, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'hypoxic_depth_05',  480.0, NULL))
   t(sample_measurement_id, sample_key, dataset_key, measurement_type, measurement_value, measurement_qual);
 
 CREATE TABLE cruise AS SELECT * FROM (VALUES ('2025-04-3322', '33RL'), ('2026-07-3322', '33RL'))
@@ -196,7 +219,9 @@ CREATE TABLE measurement_type AS SELECT * FROM (VALUES
   ('salinity_ave_corr', 'Average salinity corrected', 'PSU', 0.0, 45.0),
   ('sigma_theta_1', 'Potential density sensor 1', 'kg/m3', 15.0, 35.0),
   ('sigma_theta_ave', 'Potential density anomaly (sigma-theta), sensor-pair average', 'kg/m3', 15.0, 35.0),
-  ('spiciness0', 'Spice (spiciness at 0 dbar, TEOS-10)', 'kg/m3', -25.0, 18.0))
+  ('spiciness0', 'Spice (spiciness at 0 dbar, TEOS-10)', 'kg/m3', -25.0, 18.0),
+  ('buoyancy_n2', 'Buoyancy frequency squared (N2), TEOS-10, 10 m running mean', '1/s2',
+   NULL::DOUBLE, NULL::DOUBLE))
   t(measurement_type, description, units, valid_min, valid_max);
 
 COPY grid             TO 'fx/ducklake/tables/grid/h/grid.parquet' (FORMAT PARQUET);
@@ -307,7 +332,7 @@ class BuildSectionsSQL(unittest.TestCase):
     def test_variables_drawn(self):
         got = {r["var"] for r in self.section()}
         self.assertEqual(got, {"temperature_ave", "salinity_ave_corr",
-                               "sigma_theta_ave", "spiciness0"})
+                               "sigma_theta_ave", "spiciness0", "buoyancy_n2"})
 
     def test_sigma_theta_1_is_never_drawn(self):
         self.assertEqual(self.section("var IN ('sigma_theta_1', 'sigma_theta_2')"), [])
@@ -325,6 +350,19 @@ class BuildSectionsSQL(unittest.TestCase):
         self.assertEqual(self.section("var = 'spiciness0' AND sta = 50 AND depth_m = 10"), [])
         self.assertEqual(len(self.section("var = 'spiciness0'")), 5)
 
+    def test_buoyancy_n2_keeps_its_small_values(self):
+        # 1.2e-5 1/s2 would round to 0.0 at the 4 dp every other variable ships
+        r = self.section("var = 'buoyancy_n2' AND sta = 30 AND depth_m = 0")
+        self.assertEqual(r, [{"dataset_key": DERIVED, "var": "buoyancy_n2", "sta": 30.0,
+                              "depth_m": 0, "value": 1.2e-05}])
+        self.assertEqual(self.section("var = 'buoyancy_n2' AND sta = 40 AND depth_m = 0")[0]["value"],
+                         3e-06)
+
+    def test_buoyancy_n2_on_a_flagged_input_is_not_drawn(self):
+        # station 50, 10 m: salinity is flagged, so neither spice nor N^2 is drawn
+        self.assertEqual(self.section("var = 'buoyancy_n2' AND sta = 50 AND depth_m = 10"), [])
+        self.assertEqual(len(self.section("var = 'buoyancy_n2'")), 5)
+
     def test_sigma_theta_ave_needs_both_sensors_flagged_to_drop(self):
         # station 40, 10 m: both sensors flagged -> no average
         self.assertEqual(self.section("var = 'sigma_theta_ave' AND sta = 40 AND depth_m = 10"), [])
@@ -333,12 +371,15 @@ class BuildSectionsSQL(unittest.TestCase):
         self.assertEqual(len(self.section("var = 'sigma_theta_ave'")), 5)
 
     def test_summary_counts_the_guard(self):
-        self.assertEqual(self.summary["n_derived_blocked"], 2)
+        # spice and N^2 at station 50 / 10 m, sigma_theta_ave at station 40 / 10 m
+        self.assertEqual(self.summary["n_derived_blocked"], 3)
 
     def test_anomaly_uses_the_values_own_dataset_climatology(self):
         a = rows(self.d, "SELECT var, sta, depth_m, anomaly FROM 'public/data/_anomaly.parquet' "
                          f"WHERE cruise_key = '{CRUISE}' ORDER BY var")
         self.assertEqual(a, [
+            # 1.2e-5 - 1.0e-5: kept at 8 dp, not rounded to 0.0 like a 2 dp anomaly
+            {"var": "buoyancy_n2",     "sta": 30.0, "depth_m": 0, "anomaly": 2e-06},
             {"var": "sigma_theta_ave", "sta": 30.0, "depth_m": 0, "anomaly": 0.1},
             {"var": "spiciness0",      "sta": 30.0, "depth_m": 0, "anomaly": 0.2},
             {"var": "temperature_ave", "sta": 30.0, "depth_m": 0, "anomaly": 1.0},
@@ -375,7 +416,8 @@ class BuildSectionsSQL(unittest.TestCase):
 
     def test_variable_labels_cover_the_derived_types(self):
         v = {r["var"] for r in rows(self.d, "SELECT var FROM 'public/data/_variables.parquet'")}
-        self.assertEqual(v, {"temperature_ave", "salinity_ave_corr", "sigma_theta_ave", "spiciness0"})
+        self.assertEqual(v, {"temperature_ave", "salinity_ave_corr", "sigma_theta_ave",
+                             "spiciness0", "buoyancy_n2"})
 
     # ── the seasonal baseline (calcofi4db 4.24.0) ────────────────────────────────
 
@@ -397,33 +439,41 @@ class BuildSectionsSQL(unittest.TestCase):
         self.assertEqual(a[-1], {"var": "temperature_ave", "sta": 30.0, "anomaly": 1.0,
                                  "anomaly_season": 0.5, "season_mean": 14.5})
         # a cell with a monthly baseline and no seasonal one keeps its monthly anomaly
-        self.assertEqual(a[0]["var"], "sigma_theta_ave")
-        self.assertEqual((a[0]["anomaly"], a[0]["anomaly_season"]), (0.1, None))
+        self.assertEqual(a[1]["var"], "sigma_theta_ave")
+        self.assertEqual((a[1]["anomaly"], a[1]["anomaly_season"]), (0.1, None))
 
     def test_percent_with_baseline_counts_non_null_means(self):
         # 2026-07: 2 values, 1 monthly baseline (station 40 has a NULL mean), 2
-        # seasonal; 2025-04: 3 monthly, 1 seasonal — 4 monthly, not the 5 joined rows
-        self.assertEqual(self.summary["n_anomalies"], 4)
+        # seasonal; 2025-04: 4 monthly (N^2 is the fourth), 1 seasonal — 5 monthly,
+        # not the 6 joined rows
+        self.assertEqual(self.summary["n_anomalies"], 5)
         self.assertEqual(self.summary["n_anomalies_season"], 3)
         n_section = rows(self.d, "SELECT count(*) AS n FROM 'public/data/_sections.parquet'")[0]["n"]
-        self.assertEqual(self.summary["pct_with_baseline"], round(100.0 * 4 / n_section, 1))
+        self.assertEqual(self.summary["pct_with_baseline"], round(100.0 * 5 / n_section, 1))
 
     def test_baseline_flags(self):
         b = self.baseline()
         self.assertTrue(b["has_season"])
         self.assertTrue(b["has_cast_normal"])
         # monthly cells are rows with a monthly mean (station 40's July row is not one)
-        self.assertEqual(b["n_cells"], 7)
+        self.assertEqual(b["n_cells"], 8)
         self.assertEqual(b["n_season_cells"], 3)
         self.assertEqual(b["season_min_cruises"], 9)
 
-    # ── per-cast lines: MLD and chlorophyll-maximum depth ───────────────────────
+    # ── per-cast lines: MLD, chlorophyll max, pycnocline, nitracline, hypoxic ───
 
     def test_cast_lines_values_and_normals(self):
         self.assertEqual(self.cast(), [
             # no per-cast cell for chl_max_depth at all: the line draws, no normal
             {"var": "chl_max_depth", "sta": 30.0, "value": 40.0, "clim_mean": None,
              "n_cruises": None, "season_mean": None, "season_n_cruises": None},
+            # the 0.5 mL/L boundary has no baseline at all: the line draws alone
+            {"var": "hypoxic_depth_05", "sta": 40.0, "value": 480.0, "clim_mean": None,
+             "n_cruises": None, "season_mean": None, "season_n_cruises": None},
+            {"var": "hypoxic_depth_14", "sta": 40.0, "value": 400.0, "clim_mean": 380.0,
+             "n_cruises": 8, "season_mean": 385.0, "season_n_cruises": 13},
+            {"var": "hypoxic_depth_24", "sta": 40.0, "value": 300.0, "clim_mean": 310.0,
+             "n_cruises": 9, "season_mean": 305.0, "season_n_cruises": 14},
             # the per-cast cell (depth_bin NULL), never the per-bin decoy (999)
             {"var": "mld_sigma_theta_002", "sta": 30.0, "value": 25.0, "clim_mean": 20.0,
              "n_cruises": 10, "season_mean": 22.0, "season_n_cruises": 15},
@@ -432,18 +482,31 @@ class BuildSectionsSQL(unittest.TestCase):
             # qual 4 is a value; a season-only cell gives a seasonal normal alone
             {"var": "mld_sigma_theta_002", "sta": 50.0, "value": 35.0, "clim_mean": None,
              "n_cruises": None, "season_mean": 33.0, "season_n_cruises": 6},
+            # the CTD-derived value (60), not the bottle-derived dataset's (45), with
+            # the CTD-derived normal (55), not the bottle-derived cell's (99)
+            {"var": "nitracline_depth", "sta": 30.0, "value": 60.0, "clim_mean": 55.0,
+             "n_cruises": 11, "season_mean": 56.0, "season_n_cruises": 16},
+            {"var": "pycnocline_depth", "sta": 30.0, "value": 35.0, "clim_mean": 30.0,
+             "n_cruises": 10, "season_mean": 31.0, "season_n_cruises": 15},
+            {"var": "pycnocline_depth", "sta": 40.0, "value": 28.0, "clim_mean": None,
+             "n_cruises": None, "season_mean": None, "season_n_cruises": None},
         ])
 
     def test_cast_lines_drop_flags_other_types_other_datasets_and_off_line_casts(self):
         got = self.cast()
         # chl_max_depth at station 40 is flagged 9.0
         self.assertNotIn(("chl_max_depth", 40.0), [(r["var"], r["sta"]) for r in got])
-        # only the two drawn types, only calcofi_ctd-derived (the 500 m decoy)
-        self.assertEqual({r["var"] for r in got}, {"mld_sigma_theta_002", "chl_max_depth"})
+        # only the seven drawn types, only calcofi_ctd-derived (the 500 m decoy, and
+        # the bottle-derived nitracline_depth of 45 on the same cast)
+        self.assertEqual({r["var"] for r in got},
+                         {"mld_sigma_theta_002", "chl_max_depth", "pycnocline_depth",
+                          "nitracline_depth", "hypoxic_depth_24", "hypoxic_depth_14",
+                          "hypoxic_depth_05"})
         self.assertNotIn(500.0, [r["value"] for r in got])
+        self.assertNotIn(45.0, [r["value"] for r in got])
         # 88.5 30.1 is on no line
         self.assertNotIn(30.1, [r["sta"] for r in got])
-        self.assertEqual(self.summary["n_cast_values"], 4)
+        self.assertEqual(self.summary["n_cast_values"], 10)
 
 
 @unittest.skipUnless(DUCKDB, "duckdb CLI not on PATH")
@@ -462,22 +525,25 @@ class V1008Release(BuildSectionsSQL):
         self.assertEqual(a, [{"n": 0}])
 
     def test_percent_with_baseline_counts_non_null_means(self):
-        self.assertEqual(self.summary["n_anomalies"], 4)
+        self.assertEqual(self.summary["n_anomalies"], 5)
         self.assertEqual(self.summary["n_anomalies_season"], 0)
 
     def test_baseline_flags(self):
         b = self.baseline()
         self.assertFalse(b["has_season"])
         self.assertFalse(b["has_cast_normal"])
-        self.assertEqual(b["n_cells"], 7)
+        self.assertEqual(b["n_cells"], 8)
         self.assertEqual(b["n_season_cells"], 0)
         self.assertIsNone(b["season_min_cruises"])
 
     def test_cast_lines_values_and_normals(self):
         got = self.cast()
         self.assertEqual([(r["var"], r["sta"], r["value"]) for r in got], [
-            ("chl_max_depth", 30.0, 40.0), ("mld_sigma_theta_002", 30.0, 25.0),
-            ("mld_sigma_theta_002", 40.0, 30.0), ("mld_sigma_theta_002", 50.0, 35.0)])
+            ("chl_max_depth", 30.0, 40.0), ("hypoxic_depth_05", 40.0, 480.0),
+            ("hypoxic_depth_14", 40.0, 400.0), ("hypoxic_depth_24", 40.0, 300.0),
+            ("mld_sigma_theta_002", 30.0, 25.0), ("mld_sigma_theta_002", 40.0, 30.0),
+            ("mld_sigma_theta_002", 50.0, 35.0), ("nitracline_depth", 30.0, 60.0),
+            ("pycnocline_depth", 30.0, 35.0), ("pycnocline_depth", 40.0, 28.0)])
         self.assertTrue(all(r["clim_mean"] is None and r["season_mean"] is None for r in got))
 
 

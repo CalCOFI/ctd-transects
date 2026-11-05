@@ -210,7 +210,7 @@ COPY climatology_{clim} TO 'fx/ducklake/tables/climatology' (FORMAT PARQUET, PAR
 """
 
 # The release shapes the build must take:
-#   next   — calcofi4db 4.33.0: season columns, season-only rows, per-cast cells, and the
+#   next   — calcofi4db 4.34.0: season columns, season-only rows, per-cast cells, and the
 #            cruise's median month on `cruise` (month_median = the key's month here)
 #   median — the same, with cruise 2025-04-3322 centring on MARCH (month_median 3) and a
 #            March baseline cell: the anomaly keys on the median month, not the key's

@@ -243,7 +243,7 @@ WHERE c.sta IN (SELECT DISTINCT sta FROM section
 -- TWO BASELINES, ONE ROW (calcofi4db 4.24.0; Rasmus Swalethorp, 2026-10-06: a toggle
 -- between a monthly and a seasonal baseline). The release appends `quarter` (the
 -- season of the CRUISE's month: 1 = DJF, 2 = MAM, 3 = JJA, 4 = SON since release
--- v2026.11 / calcofi4db 4.33.0 — Q1 Jan-Mar ... Q4 Oct-Dec before) and `season_mean` /
+-- v2026.11 / calcofi4db 4.34.0 — Q1 Jan-Mar ... Q4 Oct-Dec before) and `season_mean` /
 -- `season_sd` / `season_n` / `season_n_cruises`, the season's own baseline (>= 5
 -- cruises), repeated on each of its three months — so both are looked up by the same
 -- (station, month, bin, type). A station whose MONTH is below the floor but whose
@@ -288,7 +288,7 @@ WHERE depth_m IS NOT NULL
 -- ── cruise labels, and the cruise's month and season ─────────────────────────
 -- The cruise's month is its MEDIAN cast month — `cruise.month_median`, with
 -- `date_median`, `season` and `season_year` beside it (release v2026.11+, calcofi4db
--- 4.33.0; Rasmus Swalethorp 2026-10-16, Ben Best 2026-10-20) — never the MM of its
+-- 4.34.0; Rasmus Swalethorp 2026-10-16, Ben Best 2026-10-20) — never the MM of its
 -- cruise_key: a cruise ID names sometimes the month a cruise started and sometimes
 -- the month it mostly covered, and 59 of 868 cruises centre on the month beside
 -- their key's. The key's month is the fallback on a release cut before the column

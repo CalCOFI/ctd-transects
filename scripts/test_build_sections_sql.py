@@ -152,8 +152,8 @@ CREATE TABLE climatology AS SELECT * FROM (VALUES
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'sigma_theta_ave', 24.5, 0.2, 40, 12, NULL, NULL),
   ('calcofi_ctd-derived', '093.3 030.0', 'st30-ln93.3', 4, 0, 'buoyancy_n2', 0.00001, 0.000003, 40, 12, NULL, NULL),
   ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 4, 0, 'temperature_ave', 14.0, 0.5, 40, 12, 14.5, 30),
-  -- station 30: July (the cruise's month, Q3 normal 15.5) and a June decoy
-  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 7, 0, 'temperature_ave', 16.0, 0.5, 40, 12, 15.5, 30),
+  -- station 30: July (the cruise's month, JJA normal 15.5) and a June decoy
+  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 7, 0, 'temperature_ave', 16.0, 0.5, 40, 12, 15.5, 30),{clim_extra}
   ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 6, 0, 'temperature_ave', 99.0, 0.5, 40, 12, NULL, NULL),
   -- station 40: a June monthly cell, and a July row with NO monthly mean (July is
   -- below the cruise floor, Q3 passes): no monthly baseline, a seasonal one
@@ -211,8 +211,8 @@ CREATE TABLE sample_measurement AS SELECT * FROM (VALUES
   (16, 'calcofi_ctd-cast:cast:2504_040d', 'calcofi_ctd-derived', 'hypoxic_depth_05',  480.0, NULL))
   t(sample_measurement_id, sample_key, dataset_key, measurement_type, measurement_value, measurement_qual);
 
-CREATE TABLE cruise AS SELECT * FROM (VALUES ('2025-04-3322', '33RL'), ('2026-07-3322', '33RL'))
-  t(cruise_key, ship_key);
+CREATE TABLE cruise AS SELECT * FROM (VALUES ('2025-04-3322', '33RL'{cruise_a}), ('2026-07-3322', '33RL'{cruise_b}))
+  t(cruise_key, ship_key{cruise_cols});
 CREATE TABLE ship AS SELECT '33RL' AS ship_key, 'Reuben Lasker' AS ship_name;
 CREATE TABLE measurement_type AS SELECT * FROM (VALUES
   ('temperature_ave', 'Average temperature', 'degC', -2.0, 40.0),
@@ -234,16 +234,25 @@ COPY sample_measurement TO 'fx/ducklake/tables/sample_measurement/h/sample_measu
 COPY climatology_{clim} TO 'fx/ducklake/tables/climatology' (FORMAT PARQUET, PARTITION_BY (measurement_type));
 """
 
-# The three release shapes the build must take:
-#   next  — calcofi4db 4.24.0: season columns, season-only rows, per-cast cells
-#   v1008 — v2026.10.08 (the latest when written): no season columns or per-cast
-#           cells, but sample_measurement already carries the per-cast values
-#   old   — a release with no sample_measurement table at all
+# The release shapes the build must take:
+#   next   — calcofi4db 4.34.0: season columns, season-only rows, per-cast cells, and the
+#            cruise's median month on `cruise` (month_median = the key's month here)
+#   median — the same, with cruise 2025-04-3322 centring on MARCH (month_median 3) and a
+#            March baseline cell: the anomaly keys on the median month, not the key's
+#   v1008  — v2026.10.08 (the latest when written): no season columns or per-cast
+#            cells, no median month, but sample_measurement already carries the per-cast values
+#   old    — a release with no sample_measurement table at all
+MEDIAN_COLS = ", date_median, month_median, season, season_year"
+CRUISE_B_NEXT = ", DATE '2026-07-05', 7::TINYINT, 'JJA', 2026::SMALLINT"
 RELEASES = {
-    "next":  {"clim": "v2", "tables": None},
-    "v1008": {"clim": "v1", "tables": None},
-    "old":   {"clim": "v1", "tables": ["grid", "sample", "cruise", "ship", "measurement_type",
-                                       "obs", "climatology"]},
+    "next":   {"clim": "v2", "tables": None, "cruise_cols": MEDIAN_COLS, "clim_extra": "",
+               "cruise_a": ", DATE '2025-04-10', 4::TINYINT, 'MAM', 2025::SMALLINT", "cruise_b": CRUISE_B_NEXT},
+    "median": {"clim": "v2", "tables": None, "cruise_cols": MEDIAN_COLS,
+               "clim_extra": "\n  ('calcofi_ctd-cast',    '093.3 030.0', 'st30-ln93.3', 3, 0, 'temperature_ave', 10.0, 0.5, 40, 12, 14.5, 30),",
+               "cruise_a": ", DATE '2025-03-31', 3::TINYINT, 'MAM', 2025::SMALLINT", "cruise_b": CRUISE_B_NEXT},
+    "v1008":  {"clim": "v1", "tables": None, "cruise_cols": "", "clim_extra": "", "cruise_a": "", "cruise_b": ""},
+    "old":    {"clim": "v1", "tables": ["grid", "sample", "cruise", "ship", "measurement_type",
+                                        "obs", "climatology"], "cruise_cols": "", "clim_extra": "", "cruise_a": "", "cruise_b": ""},
 }
 ALL_TABLES = ["grid", "sample", "cruise", "ship", "measurement_type", "obs",
               "sample_measurement", "climatology"]
@@ -291,7 +300,10 @@ def build_fixture(release):
     for t in ["grid", "sample", "cruise", "ship", "measurement_type", "sample_measurement"]:
         os.makedirs(os.path.join(d, "fx", "ducklake", "tables", t, "h"))
     os.makedirs(os.path.join(d, "public", "data"))
-    duck(d, FIXTURE_SQL.replace("{clim}", spec["clim"]))
+    fixture = FIXTURE_SQL
+    for k in ("clim", "cruise_cols", "cruise_a", "cruise_b", "clim_extra"):
+        fixture = fixture.replace("{" + k + "}", spec[k])
+    duck(d, fixture)
     with open(os.path.join(SCRIPTS_DIR, "build_sections.sql")) as f, \
             contextlib.redirect_stderr(io.StringIO()):
         sql = rr.render(f.read(), fixture_catalog(d, spec["tables"]))
@@ -562,3 +574,46 @@ class OldRelease(V1008Release):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+@unittest.skipUnless(DUCKDB, "duckdb CLI not on PATH")
+class MedianMonthRelease(unittest.TestCase):
+    """The cruise's month is its MEDIAN cast month (cruise.month_median, release v2026.11+;
+    Rasmus Swalethorp 2026-10-16, Ben Best 2026-10-20), never the MM of its key; the
+    seasons are DJF / MAM / JJA / SON. Cruise 2025-04-3322 centres on 31 March here."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp, cls.d, cls.summary = build_fixture("median")
+        cls.tmp_next, cls.d_next, _ = build_fixture("next")
+        cls.tmp_old, cls.d_old, _ = build_fixture("v1008")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup(); cls.tmp_next.cleanup(); cls.tmp_old.cleanup()
+
+    def cruises(self, d):
+        return rows(d, "SELECT cruise_key, month, quarter, season, season_year FROM 'public/data/_cruises.parquet' ORDER BY cruise_key")
+
+    def test_cruise_month_and_season_come_from_the_release(self):
+        self.assertEqual(self.cruises(self.d), [
+            {"cruise_key": "2025-04-3322", "month": 3, "quarter": 2, "season": "MAM", "season_year": 2025},
+            {"cruise_key": "2026-07-3322", "month": 7, "quarter": 3, "season": "JJA", "season_year": 2026}])
+
+    def test_the_key_month_is_the_fallback_on_a_release_without_month_median(self):
+        self.assertEqual(self.cruises(self.d_old), [
+            {"cruise_key": "2025-04-3322", "month": 4, "quarter": 2, "season": "MAM", "season_year": 2025},
+            {"cruise_key": "2026-07-3322", "month": 7, "quarter": 3, "season": "JJA", "season_year": 2026}])
+
+    def test_anomaly_keys_on_the_median_month_not_the_key(self):
+        # station 30, 0 m, temperature 15.0: the March normal (10.0) under the median month, the April one (14.0) by the key
+        q = ("SELECT anomaly, clim_mean::DOUBLE AS clim_mean FROM 'public/data/_anomaly.parquet' "
+             f"WHERE cruise_key = '{CRUISE}' AND var = 'temperature_ave' AND sta = 30 AND depth_m = 0")
+        self.assertEqual(rows(self.d, q), [{"anomaly": 5.0, "clim_mean": 10.0}])
+        self.assertEqual(rows(self.d_next, q), [{"anomaly": 1.0, "clim_mean": 14.0}])
+
+    def test_per_cast_normal_keys_on_the_median_month(self):
+        # the April per-cast cells (station 30 mld) no longer match a cruise that centres on March: no normal, the line still draws
+        c = rows(self.d, f"SELECT sta, value::DOUBLE AS value, clim_mean FROM 'public/data/_cast.parquet' "
+                         f"WHERE cruise_key = '{CRUISE}' AND var = 'mld_sigma_theta_002' ORDER BY sta")
+        self.assertEqual([(r["sta"], r["value"], r["clim_mean"]) for r in c], [(30.0, 25.0, None), (40.0, 30.0, None), (50.0, 35.0, None)])

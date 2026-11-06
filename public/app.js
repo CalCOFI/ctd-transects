@@ -228,26 +228,44 @@ function writeURL(sel) {
   history.replaceState(null, "", `${location.pathname}?${p}`);
 }
 
-/* ── baselines: the cruise's month or its quarter ────────────────────────── */
+/* ── baselines: the cruise's month or its season ─────────────────────────── */
 
-/* The month is the cruise's designated month (the MM of cruise_key YYYY-MM-NODC),
- * never the day a cast was occupied; the quarter is that month's (Q1 Jan–Mar …
- * Q4 Oct–Dec), the same rule calcofi4db's build_climatology(season = TRUE) keys
- * the seasonal baseline on — so 2026-07-3322 is Q3 even where it worked 30 June. */
+/* The month is the cruise's MEDIAN cast month (cruise.month_median, release v2026.11+;
+ * Rasmus Swalethorp 2026-10-16, Ben Best 2026-10-20), never the day a cast was
+ * occupied and never the MM of the cruise_key; build_sections.py stamps it on every
+ * index entry and shard (`month`, `quarter`, `season`), and the key's MM is read only
+ * for an index built before. The season is DJF / MAM / JJA / SON (quarter 1–4, December
+ * with the following winter), the same rule calcofi4db's build_climatology(season =
+ * TRUE) keys the seasonal baseline on — so 2026-07-3322 is JJA even where it worked
+ * 30 June. */
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
                      "August", "September", "October", "November", "December"];
-const QUARTER_NAMES = ["Jan–Mar", "Apr–Jun", "Jul–Sep", "Oct–Dec"];
+const SEASON_NAMES = ["Dec–Feb", "Mar–May", "Jun–Aug", "Sep–Nov"];
 
-function cruiseMonth(cruiseKey) { return Number(cruiseKey.slice(5, 7)); }
-function cruiseQuarter(cruiseKey) { return Math.floor((cruiseMonth(cruiseKey) - 1) / 3) + 1; }
+function seasonOfMonth(m) { return m == null ? null : (m === 12 || m <= 2) ? 1 : Math.floor((m - 3) / 3) + 2; }
+function cruiseMeta(cruiseKey) {
+  for (const l of (state.index && state.index.lines) || []) {
+    const c = l.cruises.find((c) => c.cruise_key === cruiseKey);
+    if (c && c.month != null) return c;
+  }
+  return null;
+}
+function cruiseMonth(cruiseKey) {
+  const c = cruiseMeta(cruiseKey);
+  return c ? c.month : Number(cruiseKey.slice(5, 7));
+}
+function cruiseQuarter(cruiseKey) {
+  const c = cruiseMeta(cruiseKey);
+  return c && c.quarter != null ? c.quarter : seasonOfMonth(cruiseMonth(cruiseKey));
+}
 
-/* "July" / "Jul–Sep" — what the normal is the normal OF */
+/* "July" / "Jun–Aug" — what the normal is the normal OF */
 function baselinePeriod(base, cruiseKey) {
-  return base === "season" ? QUARTER_NAMES[cruiseQuarter(cruiseKey) - 1]
+  return base === "season" ? SEASON_NAMES[cruiseQuarter(cruiseKey) - 1]
                            : MONTH_NAMES[cruiseMonth(cruiseKey) - 1];
 }
 
-/* "July normal, 1993–2013" / "Jul–Sep normal, 1993–2013" */
+/* "July normal, 1993–2013" / "Jun–Aug normal, 1993–2013" */
 function baselineName(base, cruiseKey) {
   const b = state.index.baseline;
   return `${baselinePeriod(base, cruiseKey)} normal` + (b ? `, ${b.yr_min}–${b.yr_max}` : "");
@@ -437,7 +455,7 @@ function noBaselineNote(shard, zv, za, base) {
                       !(za && za.some((row) => row && row[j] != null)))
     .map((s) => s.sta);
   if (!sta.length) return "";
-  const period = base === "season" ? "quarter" : "month";
+  const period = base === "season" ? "season" : "month";
   return ` Station${sta.length > 1 ? "s" : ""} ${sta.join(", ")} ` +
     `ha${sta.length > 1 ? "ve" : "s"} no baseline for this cruise's ${period} and ` +
     `${sta.length > 1 ? "are" : "is"} not drawn.`;
@@ -1011,7 +1029,7 @@ async function render(sel) {
   // the anomaly is unavailable.
   const zv = shard.vars[sel.var];
 
-  /* The baseline: the cruise's month, or its quarter where the release ships one
+  /* The baseline: the cruise's month, or its season where the release ships one
    * (calcofi4db 4.24.0). On an older release the seasonal option is disabled and
    * says why; a ?base=season link then draws the monthly baseline and the URL says
    * so. Where the chosen baseline covers nothing in this section and the other
@@ -1021,8 +1039,8 @@ async function render(sel) {
   const baseEl = $("sel-base");
   baseEl.options[1].disabled = !hasSeason;
   $("ctl-base").title = hasSeason
-    ? "Monthly: the normal for the cruise's month. Seasonal: for its quarter " +
-      "(Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec), which fills stations whose month is thin."
+    ? "Monthly: the normal for the cruise's month (its median cast month). Seasonal: for its season " +
+      "(Dec–Feb, Mar–May, Jun–Aug, Sep–Nov), which fills stations whose month is thin."
     : "This release's climatology has no seasonal baseline; releases from " +
       "calcofi4db 4.24.0 add one.";
   const counts = {
@@ -1049,7 +1067,7 @@ async function render(sel) {
   if (mode === "anomaly") {
     const b = state.index.baseline;
     const what = base === "season"
-      ? `for this station and depth over the cruise's quarter`
+      ? `for this station and depth over the cruise's season`
       : `for this station, depth and cruise month`;
     anomNote.textContent =
       (swapped ? `No ${base === "season" ? "monthly" : "seasonal"} baseline covers ` +

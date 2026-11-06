@@ -74,12 +74,16 @@ the day a cast was occupied: a July cruise's casts on 30 June are compared with
 July.
 
 From calcofi4db 4.24.0 the same table carries a **seasonal baseline** beside the
-monthly one (`quarter`, `season_mean`, … of the cruise's quarter, repeated on each of
-its months), and a row whose monthly `clim_mean` is NULL — the month is below the
-5-cruise floor, the quarter is not — is "no monthly baseline", exactly as an absent
-row is. Each shard ships `anom_season` beside `anom`, and the app's **Baseline**
+monthly one (`quarter`, `season_mean`, … of the cruise's season, repeated on each of
+its months; the seasons are DJF / MAM / JJA / SON since release v2026.11, numbered
+1–4, December with the following winter), and a row whose monthly `clim_mean` is NULL
+— the month is below the 5-cruise floor, the season is not — is "no monthly
+baseline", exactly as an absent row is. The cruise's month is its **median cast
+month** (`cruise.month_median`, v2026.11+), which the build stamps on every shard and
+index entry (`month`, `quarter`, `season`); the key's MM is read only on an older
+release. Each shard ships `anom_season` beside `anom`, and the app's **Baseline**
 control (`?base=season`) swaps them; the caption names the normal in view ("April
-normal" / "Apr–Jun normal") and counts only cells that have one. The build
+normal" / "Mar–May normal") and counts only cells that have one. The build
 feature-detects the columns (an empty typed `SELECT` unioned `BY NAME`), so a release
 without them builds unchanged and `index.json`'s `baseline.has_season` disables the
 toggle.

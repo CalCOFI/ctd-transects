@@ -404,6 +404,30 @@ function resolve(sel) {
 // can never silently drift from the margin the plot actually renders with
 const PLOT_MARGIN_L = 58, PLOT_MARGIN_R = 86;
 
+/* Phone layout. On a ~390 px screen the plot is ~320 px wide, and the desktop
+ * margins (58 px left, 86 px right for a vertical colour bar) left a 178 px
+ * sliver of field under a title, legend and modebar that all spilled over it.
+ * Below COMPACT_PX the colour bar and the legend go horizontal UNDER the plot,
+ * the title splits over two lines, and the field gets the full width. */
+const COMPACT_PX = 600;
+
+function plotGeometry(el) {
+  const w = el && el.offsetWidth ? el.offsetWidth : 900;
+  const h = el && el.offsetHeight ? el.offsetHeight : 540;
+  return w < COMPACT_PX
+    ? { compact: true,  w, h, l: 44, r: 14, t: 88, b: 168 }
+    : { compact: false, w, h, l: PLOT_MARGIN_L, r: PLOT_MARGIN_R, t: 92, b: 52 };
+}
+
+// legend names on a phone, where "Chlorophyll-max depth, November normal" is
+// wider than the plot
+const CAST_SHORT = {
+  mld_sigma_theta_002: "MLD",        chl_max_depth:    "Chl-max",
+  pycnocline_depth:    "Pycnocline", nitracline_depth: "Nitracline",
+  hypoxic_depth_24:    "O₂ 2.4",     hypoxic_depth_14: "O₂ 1.4",
+  hypoxic_depth_05:    "O₂ 0.5",
+};
+
 /* Contour levels, computed here rather than left to Plotly's `autocontour`.
  *
  * `autocontour` is one render BEHIND under `Plotly.react`: it keeps the levels it
@@ -570,7 +594,7 @@ function castLineText(meta, s, v, nv, n, base, cruiseKey, releaseNormals) {
 }
 
 /* Push the line traces for whatever this shard carries; returns how many lines. */
-function pushCastLines(traces, shard, x, base, t, picked) {
+function pushCastLines(traces, shard, x, base, t, picked, compact = false) {
   const lines = shard.lines || {};
   const pick = new Set(picked);
   const metas = (state.index.cast_lines || []).filter((m) => lines[m.var] && pick.has(m.var));
@@ -594,12 +618,13 @@ function pushCastLines(traces, shard, x, base, t, picked) {
       traces.push({ ...common, mode: "lines", y: normal,
                     line: { color: t.halo, width: 5, dash: CAST_DASH },
                     hoverinfo: "skip", showlegend: false });
-    traces.push({ ...common, mode: "lines+markers", y: L.value, name: m.label,
+    const name = compact ? (CAST_SHORT[m.var] || m.label) : m.label;
+    traces.push({ ...common, mode: "lines+markers", y: L.value, name,
                   line: { color, width: 2 },
                   marker: { color, size: 6, line: { color: t.halo, width: 1 } },
                   text, hovertemplate: "%{text}<extra></extra>" });
     if (hasNormal)
-      traces.push({ ...common, mode: "lines", y: normal, name: `${m.label}, ${period} normal`,
+      traces.push({ ...common, mode: "lines", y: normal, name: compact ? `${name} normal` : `${name}, ${period} normal`,
                     line: { color, width: 2, dash: CAST_DASH },
                     text, hovertemplate: "%{text}<extra></extra>" });
   }
@@ -645,6 +670,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
   resetBaselineBadge();
 
   const t = theme();
+  const g = plotGeometry($("plot"));
   const units = meta.units || "";
   const zlabel = anom ? `${meta.label} anomaly` : meta.label;
   // the title says which normal an anomaly departs from
@@ -708,7 +734,15 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
         return [label, line, n];
       });
     }),
-    colorbar: {
+    colorbar: g.compact ? {
+      // under the x-axis title, across the plot: in paper units, so the offset
+      // is converted from px against the plot area's own height
+      orientation: "h", x: 0.5, xanchor: "center", len: 1,
+      y: -54 / Math.max(g.h - g.t - g.b, 100), yanchor: "top",
+      title: { text: colorbarTitle(varName, units, anom), side: "top" },
+      thickness: 10, outlinewidth: 0, tickfont: { color: t.ink, size: 10 },
+      titlefont: { color: t.ink, size: 10 },
+    } : {
       title: { text: colorbarTitle(varName, units, anom), side: "right" },
       thickness: 12, outlinewidth: 0, tickfont: { color: t.ink, size: 11 },
       ...(SCI_FORMAT[varName] ? { tickformat: SCI_FORMAT[varName] } : {}),
@@ -733,7 +767,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
      * them the same way and the two traces describe the same field. */
     connectgaps: true,
     contours: { ...contourLevels(zd), coloring: "none", showlabels: true,
-                labelfont: { size: 10, color: t.ink },
+                labelfont: { size: g.compact ? 9 : 10, color: t.ink },
                 ...(SCI_FORMAT[varName] ? { labelformat: SCI_FORMAT[varName] } : {}) },
     line: { color: t.contour, width: 1 },
     showscale: false,       // without this the contour adds a SECOND colorbar
@@ -773,7 +807,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
   }
 
   // the cast's mixed-layer depth and chlorophyll maximum, over the field
-  const nLines = pushCastLines(traces, shard, x, base, t, pickedLines);
+  const nLines = pushCastLines(traces, shard, x, base, t, pickedLines, g.compact);
 
   /* Station tick marks along the top, drawn on the SECOND x-axis so that axis's
    * tick labels are the station numbers (an axis with no trace on it does not
@@ -786,7 +820,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
     mode: "markers",
     xaxis: "x2",
     x, y: x.map(() => 0),
-    marker: { symbol: "triangle-down", size: 9, color: t.ink },
+    marker: { symbol: "triangle-down", size: g.compact ? 7 : 9, color: t.ink },
     hovertemplate: shard.stations.map(
       (s, j) => `Station ${s.sta}<br>${s.dist_km.toFixed(0)} km offshore` +
              (s.bathy_m != null ? `<br>Seafloor ${s.bathy_m.toFixed(0)} m` : "") +
@@ -804,17 +838,20 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
   const xRange = useLine
     ? [lineExtent(shard.line) ?? Math.max(...x), Math.min(0, ...x)]
     : [Math.max(...x), Math.min(...x)];
-  const ticks = thinStationTicks(x, shard.stations, xRange);
+  const ticks = thinStationTicks(x, shard.stations, xRange, g);
 
   const layout = {
     // r leaves room for the colorbar; without it the bar renders outside the
     // panel and lands on top of the map
     // t carries the plot title AND the station axis above the panel; pinning the
     // title to the container top keeps the two off each other
-    margin: { l: PLOT_MARGIN_L, r: PLOT_MARGIN_R, t: 92, b: 52 },
+    margin: { l: g.l, r: g.r, t: g.t, b: g.b },
+    // on a phone the one-line title is twice the plot's width: break it after
+    // the line and cruise
     title: {
-      text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)} · ${zlabel}${titleBase}`,
-      font: { size: 15, color: t.ink },
+      text: `Line ${shard.line} · ${shard.cruise_key.slice(0, 7)}` +
+            `${g.compact ? "<br>" : " · "}${zlabel}${titleBase}`,
+      font: { size: g.compact ? 12 : 15, color: t.ink },
       yref: "container", y: 0.985, yanchor: "top",
     },
     font: { color: t.ink },
@@ -824,6 +861,7 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
         font: { size: 12 },
       },
       zeroline: false, gridcolor: t.grid,
+      ...(g.compact ? { tickangle: 0, nticks: 6, tickfont: { size: 10 } } : {}),
       /* OFFSHORE ON THE LEFT, the coast on the right — the section is laid out
        * the way the map beside it is, so a feature read off one is found in the
        * same place on the other. A CalCOFI line runs west-south-west from the
@@ -842,11 +880,13 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
       tickmode: "array",
       tickvals: ticks.tickvals,
       ticktext: ticks.ticktext,
-      tickfont: { size: 11, color: t.ink },
+      tickfont: { size: g.compact ? 10 : 11, color: t.ink },
+      ...(g.compact ? { tickangle: 0 } : {}),
     },
     yaxis: {
       title: { text: "Depth (m)", font: { size: 12 } },
       autorange: "reversed", range: [maxDepth, 0], gridcolor: t.grid,
+      ...(g.compact ? { tickfont: { size: 10 } } : {}),
       // depth 0 IS the y-origin, so Plotly's zeroline draws a dark rule right
       // along the sea surface. It is invisible under a full-width section and
       // very visible under the comparable ruler, where it runs on alone past the
@@ -859,7 +899,19 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
     // only the per-cast lines carry a legend entry; inside the panel, at the
     // offshore-deep corner, where the field is deep water and the seafloor rarely is
     showlegend: nLines > 0,
-    legend: {
+    // on a phone the panel is too small to give a corner away: the legend goes
+    // horizontal along the bottom of the figure, under the colour bar
+    legend: g.compact ? {
+      // "normal", not the default "grouped": a horizontal legend stacks each
+      // legendgroup on its own row, which ran four rows deep into the colour bar.
+      // Two entries a row instead, a line beside its normal.
+      orientation: "h", traceorder: "normal",
+      entrywidthmode: "fraction", entrywidth: 0.5,
+      xref: "container", x: 0, xanchor: "left",
+      yref: "container", y: 0, yanchor: "bottom",
+      bgcolor: "rgba(0,0,0,0)", borderwidth: 0,
+      font: { size: 10, color: t.ink },
+    } : {
       x: 0.01, xanchor: "left", y: 0.02, yanchor: "bottom",
       bgcolor: t.legendBg, bordercolor: t.grid, borderwidth: 1,
       font: { size: 11, color: t.ink },
@@ -867,7 +919,9 @@ function drawSection(shard, varName, maxDepth, mode, ruler, base = "month", pick
   };
 
   Plotly.react($("plot"), traces, layout,
-    { responsive: true, displaylogo: false });
+    // the modebar floats over the title, and on a touch screen it covers it
+    { responsive: true, displaylogo: false, displayModeBar: !g.compact });
+  state.compact = g.compact;
   wireBaselineBadgeSync($("plot"));
   // a fresh section means whatever cell the badge was synced to no longer
   // exists on screen — start each render back at the release-wide total
@@ -889,13 +943,12 @@ function lineExtent(name) {
  * rendered-width fact, not a distance fact. The triangle markers below (the
  * OTHER trace on this axis) still mark every occupied station either way —
  * only the printed numbers thin. */
-function thinStationTicks(x, stations, axisRange) {
-  const el = $("plot");
-  const innerPx = Math.max(
-    (el && el.offsetWidth ? el.offsetWidth : 900) - PLOT_MARGIN_L - PLOT_MARGIN_R, 100);
+function thinStationTicks(x, stations, axisRange, g = plotGeometry($("plot"))) {
+  const innerPx = Math.max(g.w - g.l - g.r, 100);
   const span = Math.abs(axisRange[0] - axisRange[1]) || 1;
   const pxPerUnit = innerPx / span;
-  const MIN_GAP_PX = 26;   // roughly one rotated "###.#"-width label
+  // roughly one "###.#"-width label: rotated on desktop, level (and wider) on a phone
+  const MIN_GAP_PX = g.compact ? 30 : 26;
   let lastKeptX = null;
   const tickvals = [], ticktext = [];
   stations.forEach((s, i) => {
@@ -1280,7 +1333,10 @@ async function init() {
            * (it did — 6rem of scroll-margin-top still left the heading
            * partly under it), a live measurement never can. */
           requestAnimationFrame(() => {
-            const headerH = document.querySelector(".cc-header").getBoundingClientRect().height;
+            // on a phone the header is static (styles.css), so it covers nothing
+            const header = document.querySelector(".cc-header");
+            const stuck = ["sticky", "fixed"].includes(getComputedStyle(header).position);
+            const headerH = stuck ? header.getBoundingClientRect().height : 0;
             const y = target.getBoundingClientRect().top + window.scrollY - headerH - 16;
             window.scrollTo({ top: Math.max(y, 0), behavior: "smooth" });
             history.pushState(null, "", "#methods-baseline");
@@ -1325,6 +1381,13 @@ async function init() {
       redrawSection();
       paintLineSwatches();
       drawMap(state.shard);
+    });
+
+    // the compact layout is chosen at draw time; a phone rotated past the
+    // breakpoint (or a window dragged across it) needs a redraw, not a resize
+    window.addEventListener("resize", () => {
+      if (!state.shard) return;
+      if (plotGeometry($("plot")).compact !== state.compact) redrawSection();
     });
 
     await render(sel);

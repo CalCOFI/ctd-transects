@@ -46,6 +46,16 @@ a { color: var(--accent); }
 .cc-header .tagline { white-space: normal; }
 @media (max-width: 720px) { .cc-header .tagline { display: none; } }
 
+/* on a phone the release and baseline chips do not fit beside the title: let the
+   bar wrap them onto a second row instead of pushing the page 750 px wide (which
+   made the whole page scroll sideways and clipped the plot's left edge) */
+@media (max-width: 720px) {
+  /* and not sticky: wrapped it is three rows, a third of a phone screen held
+     over the plot (the badge's jump handler measures it live either way) */
+  .cc-header { flex-wrap: wrap; height: auto; row-gap: 4px; position: static; }
+  .cc-header .cc-release { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
 /* the header is sticky (brand/v2), so an in-page jump lands its target flush
    under it without this — cut off, not merely close. This is only the
    fallback path (someone opens a #methods-baseline link directly, so the
@@ -162,6 +172,9 @@ main {
 .map  { width: 100%; height: 300px; }
 
 @media (max-width: 900px) { .plot { height: 420px; } }
+/* the compact layout (app.js plotGeometry) puts the colour bar and legend under
+   the plot, so it needs the height back for the field itself */
+@media (max-width: 680px) { .plot { height: 600px; } }
 
 .note {
   margin: .5rem .15rem 0;

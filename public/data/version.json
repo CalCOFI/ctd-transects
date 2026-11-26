@@ -1,8 +1,8 @@
 {
-  "release": "v2026.11.25",
-  "built": "2026-11-25T15:40:01Z",
+  "release": "v2026.11.26",
+  "built": "2026-11-26T12:25:50Z",
   "citation": {
-    "release": "CalCOFI (2026). CalCOFI Integrated Database, release v2026.11.25 [Data set]. Scripps Institution of Oceanography, NOAA Fisheries, and California Department of Fish and Wildlife. https://calcofi.io/db-schema/?v=v2026.11.25",
+    "release": "CalCOFI (2026). CalCOFI Integrated Database, release v2026.11.26 [Data set]. Scripps Institution of Oceanography, NOAA Fisheries, and California Department of Fish and Wildlife. https://calcofi.io/db-schema/?v=v2026.11.26",
     "release_doi": "10.5281/zenodo.22281994",
     "dataset": "Scripps Institution of Oceanography, UC San Diego, 2026. CalCOFI Hydrographic CTD Cast Profile Data. https://calcofi.org/data/oceanographic-data/ctd-cast-files/",
     "license": "CC-BY-4.0"
